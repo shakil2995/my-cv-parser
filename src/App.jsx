@@ -11,55 +11,62 @@ export default function CVParser() {
   const [minScore, setMinScore] = useState(50);
   const [searchTerm, setSearchTerm] = useState('');
 
-  const handleFileUpload = async (e) => {
-    const files = Array.from(e.target.files);
-    const newCVs = await Promise.all(files.map(async (file) => {
-      const text = await file.text();
-      return {
-        id: Date.now() + Math.random(),
-        name: file.name,
-        content: text.toLowerCase(),
-        originalContent: text,
-        file: file,
-        uploadDate: new Date(),
-        status: 'pending',
-        score: 0,
-        matchedCriteria: [],
-        rejectedBy: []
-      };
-    }));
-    
-    const scoredCVs = newCVs.map(cv => scoreCV(cv));
-    setCvs([...cvs, ...scoredCVs]);
-  };
-
+const handleFileUpload = async (e) => {
+  const files = Array.from(e.target.files);
+  const newCVs = await Promise.all(files.map(async (file) => {
+    // Keep original file object for download
+    return {
+      id: Date.now() + Math.random(),
+      name: file.name,
+      content: (await file.text()).toLowerCase(),
+      originalContent: await file.text(), // Keep original text for content display
+      originalFile: file, // Add this line to keep the original file object
+      uploadDate: new Date(),
+      status: 'pending',
+      score: 0,
+      matchedCriteria: [],
+      rejectedBy: []
+    };
+  }));
+  
+  const scoredCVs = newCVs.map(cv => scoreCV(cv));
+  setCvs([...cvs, ...scoredCVs]);
+};
 const addCriterion = () => {
   if (newKeyword.trim()) {
     const newCriterion = {
       id: uuidv4(),
       keyword: newKeyword.trim(),
       weight: newWeight,
-      type: 'must-have'
+      type: 'must-have' // Default type
     };
     const updatedCriteria = [...criteria, newCriterion];
     setCriteria(updatedCriteria);
     setNewKeyword('');
-
-    // Rescore all CVs
-    const rescoredCVs = cvs.map(cv => scoreCV(cv, updatedCriteria));
-    setCvs(rescoredCVs);
+    
+    // Reset to default weight for next entry
+    setNewWeight(10);
+    
+    // Only rescore if there are CVs
+    if (cvs.length > 0) {
+      const rescoredCVs = cvs.map(cv => scoreCV(cv, updatedCriteria, rejectKeywords));
+      setCvs(rescoredCVs);
+    }
   }
 };
-
-  const addRejectKeyword = () => {
-    if (newRejectKeyword.trim()) {
-      const updatedRejectKeywords = [...rejectKeywords, newRejectKeyword.trim()];
-      setRejectKeywords(updatedRejectKeywords);
-      setNewRejectKeyword('');
+const addRejectKeyword = () => {
+  if (newRejectKeyword.trim()) {
+    const updatedRejectKeywords = [...rejectKeywords, newRejectKeyword.trim()];
+    setRejectKeywords(updatedRejectKeywords);
+    setNewRejectKeyword('');
+    
+    // Only rescore if there are CVs
+    if (cvs.length > 0) {
       const rescoredCVs = cvs.map(cv => scoreCV(cv, criteria, updatedRejectKeywords));
       setCvs(rescoredCVs);
     }
-  };
+  }
+};
 
   const removeRejectKeyword = (keyword) => {
     const updatedRejectKeywords = rejectKeywords.filter(k => k !== keyword);
@@ -84,72 +91,76 @@ const addCriterion = () => {
     setCvs(rescoredCVs);
   };
 
-  const scoreCV = (cv, criteriaList = criteria, rejectList = rejectKeywords) => {
-    if (criteriaList.length === 0 && rejectList.length === 0) {
-      return { ...cv, score: 0, matchedCriteria: [], status: 'pending', rejectedBy: [] };
+const scoreCV = (cv, criteriaList = criteria, rejectList = rejectKeywords) => {
+  if (criteriaList.length === 0 && rejectList.length === 0) {
+    return { ...cv, score: 0, matchedCriteria: [], status: 'pending', rejectedBy: [] };
+  }
+
+  let totalScore = 0;
+  let maxScore = 0;
+  const matched = [];
+  let hasMissingMustHave = false;
+  let hasExcludingKeyword = false;
+  const rejectedBy = [];
+
+  // Check reject keywords first
+  rejectList.forEach(keyword => {
+    const keywordLower = keyword.toLowerCase();
+    const occurrences = (cv.content.match(new RegExp(keywordLower, 'g')) || []).length;
+    if (occurrences > 0) {
+      hasExcludingKeyword = true;
+      rejectedBy.push(keyword);
     }
+  });
 
-    let totalScore = 0;
-    let maxScore = 0;
-    const matched = [];
-    let hasMissingMustHave = false;
-    const rejectedBy = [];
-
-    // Check reject keywords first
-    rejectList.forEach(keyword => {
-      const keywordLower = keyword.toLowerCase();
-      const occurrences = (cv.content.match(new RegExp(keywordLower, 'g')) || []).length;
-      if (occurrences > 0) {
-        hasMissingMustHave = true;
-        rejectedBy.push(keyword);
-      }
-    });
-
-    criteriaList.forEach(criterion => {
-      const keywordLower = criterion.keyword.toLowerCase();
-      const occurrences = (cv.content.match(new RegExp(keywordLower, 'g')) || []).length;
-      
-      if (criterion.type === 'must-have') {
-        maxScore += criterion.weight;
-        if (occurrences > 0) {
-          totalScore += criterion.weight;
-          matched.push({ ...criterion, occurrences });
-        } else {
-          hasMissingMustHave = true;
-        }
-      } else if (criterion.type === 'nice-to-have') {
-        maxScore += criterion.weight;
-        if (occurrences > 0) {
-          totalScore += criterion.weight;
-          matched.push({ ...criterion, occurrences });
-        }
-      } else if (criterion.type === 'excluding') {
-        if (occurrences > 0) {
-          hasMissingMustHave = true;
-          rejectedBy.push(criterion.keyword);
-        }
-      }
-    });
-
-    const scorePercentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+  // Check criteria
+  criteriaList.forEach(criterion => {
+    const keywordLower = criterion.keyword.toLowerCase();
+    const occurrences = (cv.content.match(new RegExp(keywordLower, 'g')) || []).length;
     
-    let status;
-    if (hasMissingMustHave) {
-      status = 'rejected';
-    } else if (scorePercentage >= minScore) {
-      status = 'accepted';
-    } else {
-      status = 'rejected';
+    if (criterion.type === 'must-have') {
+      maxScore += criterion.weight;
+      if (occurrences > 0) {
+        totalScore += criterion.weight;
+        matched.push({ ...criterion, occurrences });
+      } else {
+        // Only mark as missing if no occurrences found
+        hasMissingMustHave = true;
+      }
+    } else if (criterion.type === 'nice-to-have') {
+      maxScore += criterion.weight;
+      if (occurrences > 0) {
+        totalScore += criterion.weight;
+        matched.push({ ...criterion, occurrences });
+      }
+      // Nice-to-have keywords don't cause rejection if missing
+    } else if (criterion.type === 'excluding') {
+      if (occurrences > 0) {
+        hasExcludingKeyword = true;
+        rejectedBy.push(criterion.keyword);
+      }
     }
+  });
 
-    return {
-      ...cv,
-      score: scorePercentage,
-      matchedCriteria: matched,
-      status,
-      rejectedBy
-    };
+  const scorePercentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+  
+  let status;
+  if (hasExcludingKeyword || hasMissingMustHave) {
+    status = 'rejected';
+  } else if (scorePercentage >= minScore) {
+    status = 'accepted';
+  } else {
+    status = 'rejected';
+  }
+
+  return {
+    ...cv,
+    score: scorePercentage,
+    matchedCriteria: matched,
+    status,
+    rejectedBy
   };
+};
 
   const applyScoring = () => {
     const rescoredCVs = cvs.map(cv => scoreCV(cv));
@@ -192,15 +203,25 @@ const addCriterion = () => {
     URL.revokeObjectURL(url);
   };
 
-  const downloadCVsByStatus = (status) => {
-    const filteredCVs = cvs.filter(cv => cv.status === status);
-    if (filteredCVs.length === 0) {
-      alert(`No ${status} CVs to download`);
-      return;
-    }
+const downloadCVsByStatus = (status) => {
+  const filteredCVs = cvs.filter(cv => cv.status === status);
+  if (filteredCVs.length === 0) {
+    alert(`No ${status} CVs to download`);
+    return;
+  }
 
-    filteredCVs.forEach((cv, index) => {
-      setTimeout(() => {
+  filteredCVs.forEach((cv, index) => {
+    setTimeout(() => {
+      // Use the original file object if available
+      if (cv.originalFile) {
+        const url = URL.createObjectURL(cv.originalFile);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${status}_${index + 1}_${cv.originalFile.name}`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        // Fallback to creating blob from original content
         const blob = new Blob([cv.originalContent], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -208,9 +229,10 @@ const addCriterion = () => {
         a.download = `${status}_${index + 1}_${cv.name}`;
         a.click();
         URL.revokeObjectURL(url);
-      }, index * 100);
-    });
-  };
+      }
+    }, index * 100);
+  });
+};
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-6">
