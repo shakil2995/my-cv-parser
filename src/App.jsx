@@ -1,93 +1,121 @@
-import React, { useState } from 'react';
-import { Upload, Plus, X, Check, XCircle, Award, Search, Download, Settings, FolderArchive, Filter } from 'lucide-react';
-import { v4 as uuidv4 } from 'uuid';
+import React, { useState } from "react";
+import {
+  Upload,
+  Plus,
+  X,
+  Check,
+  XCircle,
+  Award,
+  Search,
+  Download,
+  Settings,
+  FolderArchive,
+  Filter,
+} from "lucide-react";
+import { v4 as uuidv4 } from "uuid";
+import JSZip from "jszip";
 export default function CVParser() {
   const [cvs, setCvs] = useState([]);
   const [criteria, setCriteria] = useState([]);
   const [rejectKeywords, setRejectKeywords] = useState([]);
-  const [newKeyword, setNewKeyword] = useState('');
-  const [newRejectKeyword, setNewRejectKeyword] = useState('');
+  const [newKeyword, setNewKeyword] = useState("");
+  const [newRejectKeyword, setNewRejectKeyword] = useState("");
   const [newWeight, setNewWeight] = useState(10);
   const [minScore, setMinScore] = useState(50);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState("");
 
-const handleFileUpload = async (e) => {
-  const files = Array.from(e.target.files);
-  const newCVs = await Promise.all(files.map(async (file) => {
-    // Keep original file object for download
-    return {
-      id: Date.now() + Math.random(),
-      name: file.name,
-      content: (await file.text()).toLowerCase(),
-      originalContent: await file.text(), // Keep original text for content display
-      originalFile: file, // Add this line to keep the original file object
-      uploadDate: new Date(),
-      status: 'pending',
-      score: 0,
-      matchedCriteria: [],
-      rejectedBy: []
-    };
-  }));
-  
-  const scoredCVs = newCVs.map(cv => scoreCV(cv));
-  setCvs([...cvs, ...scoredCVs]);
-};
-const addCriterion = () => {
-  if (newKeyword.trim()) {
-    const newCriterion = {
-      id: uuidv4(),
-      keyword: newKeyword.trim(),
-      weight: newWeight,
-      type: 'must-have' // Default type
-    };
-    const updatedCriteria = [...criteria, newCriterion];
-    setCriteria(updatedCriteria);
-    setNewKeyword('');
-    
-    // Reset to default weight for next entry
-    setNewWeight(10);
-    
-    // Only rescore if there are CVs
-    if (cvs.length > 0) {
-      const rescoredCVs = cvs.map(cv => scoreCV(cv, updatedCriteria, rejectKeywords));
-      setCvs(rescoredCVs);
+  const handleFileUpload = async (e) => {
+    const files = Array.from(e.target.files);
+    const newCVs = await Promise.all(
+      files.map(async (file) => {
+        // Keep original file object for download
+        return {
+          id: Date.now() + Math.random(),
+          name: file.name,
+          content: (await file.text()).toLowerCase(),
+          originalContent: await file.text(), // Keep original text for content display
+          originalFile: file, // Add this line to keep the original file object
+          uploadDate: new Date(),
+          status: "pending",
+          score: 0,
+          matchedCriteria: [],
+          rejectedBy: [],
+        };
+      })
+    );
+
+    const scoredCVs = newCVs.map((cv) => scoreCV(cv));
+    setCvs([...cvs, ...scoredCVs]);
+  };
+  const addCriterion = () => {
+    if (newKeyword.trim()) {
+      const newCriterion = {
+        id: uuidv4(),
+        keyword: newKeyword.trim(),
+        weight: newWeight,
+        type: "must-have", // Default type
+      };
+      const updatedCriteria = [...criteria, newCriterion];
+      setCriteria(updatedCriteria);
+      setNewKeyword("");
+
+      // Reset to default weight for next entry
+      setNewWeight(10);
+
+      // Only rescore if there are CVs
+      if (cvs.length > 0) {
+        const rescoredCVs = cvs.map((cv) =>
+          scoreCV(cv, updatedCriteria, rejectKeywords)
+        );
+        setCvs(rescoredCVs);
+      }
     }
-  }
-};
-const addRejectKeyword = () => {
-  if (newRejectKeyword.trim()) {
-    const updatedRejectKeywords = [...rejectKeywords, newRejectKeyword.trim()];
-    setRejectKeywords(updatedRejectKeywords);
-    setNewRejectKeyword('');
-    
-    // Only rescore if there are CVs
-    if (cvs.length > 0) {
-      const rescoredCVs = cvs.map(cv => scoreCV(cv, criteria, updatedRejectKeywords));
-      setCvs(rescoredCVs);
+  };
+  const addRejectKeyword = () => {
+    if (newRejectKeyword.trim()) {
+      const updatedRejectKeywords = [
+        ...rejectKeywords,
+        newRejectKeyword.trim(),
+      ];
+      setRejectKeywords(updatedRejectKeywords);
+      setNewRejectKeyword("");
+
+      // Only rescore if there are CVs
+      if (cvs.length > 0) {
+        const rescoredCVs = cvs.map((cv) =>
+          scoreCV(cv, criteria, updatedRejectKeywords)
+        );
+        setCvs(rescoredCVs);
+      }
     }
-  }
-};
+  };
 
   const removeRejectKeyword = (keyword) => {
-    const updatedRejectKeywords = rejectKeywords.filter(k => k !== keyword);
+    const updatedRejectKeywords = rejectKeywords.filter((k) => k !== keyword);
     setRejectKeywords(updatedRejectKeywords);
-    const rescoredCVs = cvs.map(cv => scoreCV(cv, criteria, updatedRejectKeywords));
+    const rescoredCVs = cvs.map((cv) =>
+      scoreCV(cv, criteria, updatedRejectKeywords)
+    );
     setCvs(rescoredCVs);
   };
 
   const removeCriterion = (id) => {
-    const updatedCriteria = criteria.filter(c => c.id !== id);
+    const updatedCriteria = criteria.filter((c) => c.id !== id);
     setCriteria(updatedCriteria);
-    const rescoredCVs = cvs.map(cv => scoreCV(cv, updatedCriteria, rejectKeywords));
+    const rescoredCVs = cvs.map((cv) =>
+      scoreCV(cv, updatedCriteria, rejectKeywords)
+    );
     setCvs(rescoredCVs);
   };
 
   const updateCriterionType = (id, type) => {
-    const updatedCriteria = criteria.map(c => 
+    const updatedCriteria = criteria.map((c) =>
       c.id === id ? { ...c, type } : c
     );
     setCriteria(updatedCriteria);
-    const rescoredCVs = cvs.map(cv => scoreCV(cv, updatedCriteria, rejectKeywords));
+    const rescoredCVs = cvs.map((cv) =>
+      scoreCV(cv, updatedCriteria, rejectKeywords)
+    );
     setCvs(rescoredCVs);
   };
 
@@ -99,11 +127,10 @@ const scoreCV = (cv, criteriaList = criteria, rejectList = rejectKeywords) => {
   let totalScore = 0;
   let maxScore = 0;
   const matched = [];
-  let hasMissingMustHave = false;
   let hasExcludingKeyword = false;
   const rejectedBy = [];
 
-  // Check reject keywords first
+  // Check reject keywords first (from reject list)
   rejectList.forEach(keyword => {
     const keywordLower = keyword.toLowerCase();
     const occurrences = (cv.content.match(new RegExp(keywordLower, 'g')) || []).length;
@@ -112,6 +139,9 @@ const scoreCV = (cv, criteriaList = criteria, rejectList = rejectKeywords) => {
       rejectedBy.push(keyword);
     }
   });
+
+  // Track missing must-have criteria
+  const missingMustHaves = [];
 
   // Check criteria
   criteriaList.forEach(criterion => {
@@ -124,8 +154,8 @@ const scoreCV = (cv, criteriaList = criteria, rejectList = rejectKeywords) => {
         totalScore += criterion.weight;
         matched.push({ ...criterion, occurrences });
       } else {
-        // Only mark as missing if no occurrences found
-        hasMissingMustHave = true;
+        // Track missing must-haves
+        missingMustHaves.push(criterion.keyword);
       }
     } else if (criterion.type === 'nice-to-have') {
       maxScore += criterion.weight;
@@ -133,7 +163,6 @@ const scoreCV = (cv, criteriaList = criteria, rejectList = rejectKeywords) => {
         totalScore += criterion.weight;
         matched.push({ ...criterion, occurrences });
       }
-      // Nice-to-have keywords don't cause rejection if missing
     } else if (criterion.type === 'excluding') {
       if (occurrences > 0) {
         hasExcludingKeyword = true;
@@ -145,12 +174,26 @@ const scoreCV = (cv, criteriaList = criteria, rejectList = rejectKeywords) => {
   const scorePercentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
   
   let status;
-  if (hasExcludingKeyword || hasMissingMustHave) {
+  
+  // Determine status
+  if (hasExcludingKeyword) {
+    // Auto-reject if any excluding keyword is found
     status = 'rejected';
+  } else if (missingMustHaves.length > 0) {
+    // Reject if any must-have criteria are missing
+    status = 'rejected';
+    // Add missing must-haves to rejectedBy for clarity
+    missingMustHaves.forEach(keyword => {
+      rejectedBy.push(`Missing: ${keyword}`);
+    });
+  } else if (maxScore === 0) {
+    // No criteria defined (only reject keywords which weren't found)
+    status = 'pending';
   } else if (scorePercentage >= minScore) {
     status = 'accepted';
   } else {
     status = 'rejected';
+    rejectedBy.push(`Score ${scorePercentage}% < ${minScore}%`);
   }
 
   return {
@@ -163,84 +206,100 @@ const scoreCV = (cv, criteriaList = criteria, rejectList = rejectKeywords) => {
 };
 
   const applyScoring = () => {
-    const rescoredCVs = cvs.map(cv => scoreCV(cv));
+    const rescoredCVs = cvs.map((cv) => scoreCV(cv));
     setCvs(rescoredCVs);
   };
 
   const deleteCV = (id) => {
-    setCvs(cvs.filter(cv => cv.id !== id));
+    setCvs(cvs.filter((cv) => cv.id !== id));
   };
 
-  const acceptedCVs = cvs.filter(cv => cv.status === 'accepted').sort((a, b) => b.score - a.score);
-  const rejectedCVs = cvs.filter(cv => cv.status === 'rejected').sort((a, b) => b.score - a.score);
-  const pendingCVs = cvs.filter(cv => cv.status === 'pending');
+  const acceptedCVs = cvs
+    .filter((cv) => cv.status === "accepted")
+    .sort((a, b) => b.score - a.score);
+  const rejectedCVs = cvs
+    .filter((cv) => cv.status === "rejected")
+    .sort((a, b) => b.score - a.score);
+  const pendingCVs = cvs.filter((cv) => cv.status === "pending");
 
-  const filteredAccepted = acceptedCVs.filter(cv => 
+  const filteredAccepted = acceptedCVs.filter((cv) =>
     cv.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
-  const filteredRejected = rejectedCVs.filter(cv => 
+  const filteredRejected = rejectedCVs.filter((cv) =>
     cv.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const exportResults = () => {
-    const data = cvs.map(cv => ({
+    const data = cvs.map((cv) => ({
       name: cv.name,
       status: cv.status,
       score: cv.score,
-      matchedKeywords: cv.matchedCriteria.map(c => c.keyword).join('; '),
-      rejectedBy: cv.rejectedBy.join('; ')
+      matchedKeywords: cv.matchedCriteria.map((c) => c.keyword).join("; "),
+      rejectedBy: cv.rejectedBy.join("; "),
     }));
     const csv = [
-      'Name,Status,Score,Matched Keywords,Rejected By',
-      ...data.map(row => `"${row.name}","${row.status}",${row.score},"${row.matchedKeywords}","${row.rejectedBy}"`)
-    ].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
+      "Name,Status,Score,Matched Keywords,Rejected By",
+      ...data.map(
+        (row) =>
+          `"${row.name}","${row.status}",${row.score},"${row.matchedKeywords}","${row.rejectedBy}"`
+      ),
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    a.download = 'cv-results.csv';
+    a.download = "cv-results.csv";
     a.click();
     URL.revokeObjectURL(url);
   };
 
-const downloadCVsByStatus = (status) => {
+const downloadCVsByStatus = async (status) => {
   const filteredCVs = cvs.filter(cv => cv.status === status);
   if (filteredCVs.length === 0) {
     alert(`No ${status} CVs to download`);
     return;
   }
 
-  filteredCVs.forEach((cv, index) => {
-    setTimeout(() => {
-      // Use the original file object if available
-      if (cv.originalFile) {
-        const url = URL.createObjectURL(cv.originalFile);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${status}_${index + 1}_${cv.originalFile.name}`;
-        a.click();
-        URL.revokeObjectURL(url);
-      } else {
-        // Fallback to creating blob from original content
-        const blob = new Blob([cv.originalContent], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${status}_${index + 1}_${cv.name}`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-    }, index * 100);
-  });
-};
+  // Dynamically import JSZip to reduce bundle size
+  const JSZip = (await import('jszip')).default;
+  const zip = new JSZip();
 
+  // Add each CV to the zip file
+  filteredCVs.forEach((cv, index) => {
+    const fileName = `${status}_${index + 1}_${cv.name}`;
+    
+    // Use original file object if available, otherwise create from content
+    if (cv.originalFile) {
+      zip.file(fileName, cv.originalFile);
+    } else {
+      // Fallback to creating blob from original content
+      zip.file(fileName, cv.originalContent);
+    }
+  });
+
+  // Generate the zip file
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  
+  // Create download link
+  const url = URL.createObjectURL(zipBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${status}_CVs_${new Date().toISOString().slice(0, 10)}.zip`;
+  a.click();
+  
+  // Clean up
+  URL.revokeObjectURL(url);
+};
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-6">
-<div className="w-full mx-auto px-4">    <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-6 border border-white/20">
+      <div className="w-full mx-auto px-4">
+        {" "}
+        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-6 border border-white/20">
           <h1 className="text-4xl font-bold text-white mb-2">CV Parser</h1>
-          <p className="text-purple-200">Define criteria, upload CVs, and automatically rank candidates</p>
+          <p className="text-purple-200">
+            Define criteria, upload CVs, and automatically rank candidates
+          </p>
         </div>
-
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1 space-y-6">
             <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
@@ -255,17 +314,21 @@ const downloadCVsByStatus = (status) => {
                   placeholder="Enter keyword (e.g., Python, MBA)"
                   value={newKeyword}
                   onChange={(e) => setNewKeyword(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && addCriterion()}
+                  onKeyPress={(e) => e.key === "Enter" && addCriterion()}
                   className="w-full px-4 py-2 bg-white/20 border border-white/30 rounded-lg text-white placeholder-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-400"
                 />
-                
+
                 <div className="flex gap-2">
                   <div className="flex-1">
-                    <label className="block text-xs text-purple-200 mb-1">Weight</label>
+                    <label className="block text-xs text-purple-200 mb-1">
+                      Weight
+                    </label>
                     <input
                       type="number"
                       value={newWeight}
-                      onChange={(e) => setNewWeight(parseInt(e.target.value) || 0)}
+                      onChange={(e) =>
+                        setNewWeight(parseInt(e.target.value) || 0)
+                      }
                       min="1"
                       max="100"
                       className="w-full px-3 py-2 bg-white/20 border border-white/30 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-400"
@@ -283,10 +346,15 @@ const downloadCVsByStatus = (status) => {
 
               {criteria.length > 0 && (
                 <div className="space-y-2 max-h-48 overflow-y-auto mb-4">
-                  {criteria.map(c => (
-                    <div key={c.id} className="bg-white/20 rounded-lg p-3 border border-white/30">
+                  {criteria.map((c) => (
+                    <div
+                      key={c.id}
+                      className="bg-white/20 rounded-lg p-3 border border-white/30"
+                    >
                       <div className="flex items-start justify-between mb-2">
-                        <span className="text-white font-medium">{c.keyword}</span>
+                        <span className="text-white font-medium">
+                          {c.keyword}
+                        </span>
                         <button
                           onClick={() => removeCriterion(c.id)}
                           className="text-red-300 hover:text-red-100"
@@ -295,16 +363,26 @@ const downloadCVsByStatus = (status) => {
                         </button>
                       </div>
                       <div className="flex items-center gap-2 text-sm">
-                        <span className="text-purple-200">Weight: {c.weight}</span>
+                        <span className="text-purple-200">
+                          Weight: {c.weight}
+                        </span>
                       </div>
                       <select
                         value={c.type}
-                        onChange={(e) => updateCriterionType(c.id, e.target.value)}
+                        onChange={(e) =>
+                          updateCriterionType(c.id, e.target.value)
+                        }
                         className="mt-2 w-full px-2 py-1 bg-white/20 border border-white/30 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
                       >
-                        <option value="must-have" className="bg-slate-800">Must Have</option>
-                        <option value="nice-to-have" className="bg-slate-800">Nice to Have</option>
-                        <option value="excluding" className="bg-slate-800">Excluding</option>
+                        <option value="must-have" className="bg-slate-800">
+                          Must Have
+                        </option>
+                        <option value="nice-to-have" className="bg-slate-800">
+                          Nice to Have
+                        </option>
+                        <option value="excluding" className="bg-slate-800">
+                          Excluding
+                        </option>
                       </select>
                     </div>
                   ))}
@@ -322,7 +400,7 @@ const downloadCVsByStatus = (status) => {
                     placeholder="e.g., competitor name"
                     value={newRejectKeyword}
                     onChange={(e) => setNewRejectKeyword(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && addRejectKeyword()}
+                    onKeyPress={(e) => e.key === "Enter" && addRejectKeyword()}
                     className="flex-1 px-3 py-2 bg-white/20 border border-white/30 rounded-lg text-white placeholder-purple-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm"
                   />
                   <button
@@ -335,7 +413,10 @@ const downloadCVsByStatus = (status) => {
                 {rejectKeywords.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {rejectKeywords.map((keyword, i) => (
-                      <span key={i} className="px-2 py-1 bg-red-600/80 text-white text-xs rounded-full flex items-center gap-1">
+                      <span
+                        key={i}
+                        className="px-2 py-1 bg-red-600/80 text-white text-xs rounded-full flex items-center gap-1"
+                      >
                         {keyword}
                         <button
                           onClick={() => removeRejectKeyword(keyword)}
@@ -355,7 +436,7 @@ const downloadCVsByStatus = (status) => {
                 <Settings className="w-5 h-5" />
                 Settings
               </h3>
-              
+
               <div className="space-y-3">
                 <div>
                   <label className="block text-sm text-purple-200 mb-2">
@@ -395,17 +476,17 @@ const downloadCVsByStatus = (status) => {
                       <Download className="w-4 h-4" />
                       Export CSV
                     </button>
-                    
+
                     <button
-                      onClick={() => downloadCVsByStatus('accepted')}
+                      onClick={() => downloadCVsByStatus("accepted")}
                       className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg transition flex items-center justify-center gap-2"
                     >
                       <FolderArchive className="w-4 h-4" />
                       Download Accepted
                     </button>
-                    
+
                     <button
-                      onClick={() => downloadCVsByStatus('rejected')}
+                      onClick={() => downloadCVsByStatus("rejected")}
                       className="w-full bg-orange-600 hover:bg-orange-700 text-white py-2 rounded-lg transition flex items-center justify-center gap-2"
                     >
                       <FolderArchive className="w-4 h-4" />
@@ -420,15 +501,21 @@ const downloadCVsByStatus = (status) => {
           <div className="lg:col-span-2 space-y-6">
             <div className="grid grid-cols-3 gap-4">
               <div className="bg-green-500/20 backdrop-blur-lg rounded-xl p-4 border border-green-400/30">
-                <div className="text-3xl font-bold text-green-300">{acceptedCVs.length}</div>
+                <div className="text-3xl font-bold text-green-300">
+                  {acceptedCVs.length}
+                </div>
                 <div className="text-green-200 text-sm">Accepted</div>
               </div>
               <div className="bg-red-500/20 backdrop-blur-lg rounded-xl p-4 border border-red-400/30">
-                <div className="text-3xl font-bold text-red-300">{rejectedCVs.length}</div>
+                <div className="text-3xl font-bold text-red-300">
+                  {rejectedCVs.length}
+                </div>
                 <div className="text-red-200 text-sm">Rejected</div>
               </div>
               <div className="bg-yellow-500/20 backdrop-blur-lg rounded-xl p-4 border border-yellow-400/30">
-                <div className="text-3xl font-bold text-yellow-300">{pendingCVs.length}</div>
+                <div className="text-3xl font-bold text-yellow-300">
+                  {pendingCVs.length}
+                </div>
                 <div className="text-yellow-200 text-sm">Pending</div>
               </div>
             </div>
@@ -456,15 +543,22 @@ const downloadCVsByStatus = (status) => {
                 </h3>
                 <div className="space-y-3 max-h-96 overflow-y-auto">
                   {filteredAccepted.map((cv, index) => (
-                    <div key={cv.id} className="bg-green-500/20 rounded-lg p-4 border border-green-400/30">
+                    <div
+                      key={cv.id}
+                      className="bg-green-500/20 rounded-lg p-4 border border-green-400/30"
+                    >
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
                             <Award className="w-5 h-5 text-yellow-400" />
-                            <span className="text-white font-semibold">#{index + 1} - {cv.name}</span>
+                            <span className="text-white font-semibold">
+                              #{index + 1} - {cv.name}
+                            </span>
                           </div>
                           <div className="mt-2 flex items-center gap-3">
-                            <div className="text-2xl font-bold text-green-300">{cv.score}%</div>
+                            <div className="text-2xl font-bold text-green-300">
+                              {cv.score}%
+                            </div>
                             <div className="flex-1 bg-white/20 rounded-full h-3">
                               <div
                                 className="bg-green-400 h-3 rounded-full transition-all"
@@ -475,7 +569,10 @@ const downloadCVsByStatus = (status) => {
                           {cv.matchedCriteria.length > 0 && (
                             <div className="mt-3 flex flex-wrap gap-2">
                               {cv.matchedCriteria.map((mc, i) => (
-                                <span key={i} className="px-2 py-1 bg-green-600 text-white text-xs rounded-full">
+                                <span
+                                  key={i}
+                                  className="px-2 py-1 bg-green-600 text-white text-xs rounded-full"
+                                >
                                   ✓ {mc.keyword} ({mc.occurrences}x)
                                 </span>
                               ))}
@@ -502,13 +599,20 @@ const downloadCVsByStatus = (status) => {
                   Rejected Candidates
                 </h3>
                 <div className="space-y-3 max-h-64 overflow-y-auto">
-                  {filteredRejected.map(cv => (
-                    <div key={cv.id} className="bg-red-500/20 rounded-lg p-4 border border-red-400/30">
+                  {filteredRejected.map((cv) => (
+                    <div
+                      key={cv.id}
+                      className="bg-red-500/20 rounded-lg p-4 border border-red-400/30"
+                    >
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
-                          <span className="text-white font-semibold">{cv.name}</span>
+                          <span className="text-white font-semibold">
+                            {cv.name}
+                          </span>
                           <div className="mt-2 flex items-center gap-3">
-                            <div className="text-xl font-bold text-red-300">{cv.score}%</div>
+                            <div className="text-xl font-bold text-red-300">
+                              {cv.score}%
+                            </div>
                             <div className="flex-1 bg-white/20 rounded-full h-2">
                               <div
                                 className="bg-red-400 h-2 rounded-full transition-all"
@@ -518,13 +622,16 @@ const downloadCVsByStatus = (status) => {
                           </div>
                           {cv.rejectedBy.length > 0 && (
                             <div className="mt-2 text-xs text-red-200">
-                              Rejected by: {cv.rejectedBy.join(', ')}
+                              Rejected by: {cv.rejectedBy.join(", ")}
                             </div>
                           )}
                           {cv.matchedCriteria.length > 0 && (
                             <div className="mt-2 flex flex-wrap gap-1">
                               {cv.matchedCriteria.map((mc, i) => (
-                                <span key={i} className="px-2 py-1 bg-red-800/50 text-red-200 text-xs rounded-full">
+                                <span
+                                  key={i}
+                                  className="px-2 py-1 bg-red-800/50 text-red-200 text-xs rounded-full"
+                                >
                                   {mc.keyword}
                                 </span>
                               ))}
@@ -548,7 +655,9 @@ const downloadCVsByStatus = (status) => {
               <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
                 <div className="text-center text-purple-200">
                   <Search className="w-12 h-12 mx-auto mb-3 text-purple-300" />
-                  <p className="text-lg">Add matching criteria to start ranking CVs</p>
+                  <p className="text-lg">
+                    Add matching criteria to start ranking CVs
+                  </p>
                 </div>
               </div>
             )}
@@ -558,7 +667,9 @@ const downloadCVsByStatus = (status) => {
                 <div className="text-center text-purple-200">
                   <Upload className="w-16 h-16 mx-auto mb-4 text-purple-300" />
                   <p className="text-lg">Upload CVs to get started</p>
-                  <p className="text-sm mt-2">Define your criteria, then upload candidate resumes</p>
+                  <p className="text-sm mt-2">
+                    Define your criteria, then upload candidate resumes
+                  </p>
                 </div>
               </div>
             )}
@@ -566,6 +677,5 @@ const downloadCVsByStatus = (status) => {
         </div>
       </div>
     </div>
-    
   );
 }
