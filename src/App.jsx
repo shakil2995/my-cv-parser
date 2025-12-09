@@ -504,7 +504,7 @@ const processFiles = async () => {
                 </button>
               </div>
             </div>
-            <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+            <div className="space-y-5 max-h-[32rem] overflow-y-auto pr-3">
               {results.rejected.map((candidate, idx) => (
                 <div key={idx} className="bg-white p-4 rounded-lg border border-red-100">
                   <div className="flex justify-between items-start mb-3">
