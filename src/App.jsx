@@ -53,35 +53,54 @@ const CVParserApp = () => {
     }
   };
 
+// Example category multipliers
+const categoryMultiplier = {
+  technical: 1.2,
+  soft: 1,
+  cert: 1.1
+};
+
 const calculateScore = (text) => {
   const lowerText = text.toLowerCase();
   let score = 0;
   const foundKeywords = [];
   const foundNegatives = [];
-  let hasNegativeHit = false;  // <-- NEW
+  let hasNegativeHit = false;
 
-  positiveKeywords.forEach(({ keyword, weight }) => {
+  positiveKeywords.forEach(({ keyword, weight, category = 'soft' }) => {
     const regex = new RegExp(keyword.toLowerCase(), 'gi');
-    const matches = (lowerText.match(regex) || []).length;
-    if (matches > 0) {
-      const points = matches * weight;
-      score += points;
-      foundKeywords.push({ keyword, matches, points });
+    const matches = lowerText.match(regex) || [];
+
+    if (matches.length > 0) {
+      // Logarithmic decay scoring
+      const totalPoints = weight * Math.log(matches.length + 1) * (categoryMultiplier[category] || 1);
+      score += totalPoints;
+      foundKeywords.push({ keyword, matches: matches.length, points: Math.round(totalPoints), category });
     }
   });
 
   negativeKeywords.forEach(keyword => {
     const regex = new RegExp(keyword.toLowerCase(), 'gi');
-    const matches = (lowerText.match(regex) || []).length;
-    if (matches > 0) {
-      hasNegativeHit = true;  // <-- EVEN ONE MATCH = REJECT COMPLETELY
-      foundNegatives.push({ keyword, matches });
+    const matches = lowerText.match(regex) || [];
+    if (matches.length > 0) {
+      hasNegativeHit = true;
+      foundNegatives.push({ keyword, matches: matches.length });
+      score -= 20 * matches.length; // heavy penalty
     }
   });
 
-  return { score, foundKeywords, foundNegatives, hasNegativeHit };
+  if (score < 0) score = 0;
+  return { score: Math.round(score), foundKeywords, foundNegatives, hasNegativeHit };
 };
 
+const getMaxPossibleScore = () => {
+  let maxScore = 0;
+  positiveKeywords.forEach(({ weight, category = 'soft' }) => {
+    // Assume minimum 1 occurrence per keyword
+    maxScore += weight * Math.log(2) * (categoryMultiplier[category] || 1);
+  });
+  return Math.round(maxScore);
+};
   const handleFileUpload = async (e) => {
     const uploadedFiles = Array.from(e.target.files);
     const pdfFiles = [];
@@ -107,47 +126,53 @@ const processFiles = async () => {
   }
 
   setProcessing(true);
-  const accepted = [];
-  const rejected = [];
+  const candidates = [];
 
   try {
+    // Extract and score each CV
     for (const file of files) {
       try {
         const text = await extractTextFromPdf(file);
         const { score, foundKeywords, foundNegatives, hasNegativeHit } = calculateScore(text);
 
-        const candidate = {
+        candidates.push({
           name: file.name,
           score,
           foundKeywords,
           foundNegatives,
           text: text.substring(0, 500) + "...",
-          fullText: text
-        };
-
-        // 🔥 INSTANT REJECTION IF ANY NEGATIVE KEYWORD FOUND
-        if (hasNegativeHit) {
-          candidate.score = 0; // optional: force to zero
-          rejected.push(candidate);
-        }
-        else if (score >= 20) {
-          accepted.push(candidate);
-        } 
-        else {
-          rejected.push(candidate);
-        }
-
+          fullText: text,
+          hasNegativeHit
+        });
       } catch (error) {
-        rejected.push({
+        candidates.push({
           name: file.name,
           score: 0,
           error: error.message,
           foundKeywords: [],
           foundNegatives: [],
-          fullText: "Error loading CV"
+          fullText: "Error loading CV",
+          hasNegativeHit: false
         });
       }
     }
+
+    // Absolute passing score
+    const maxPossibleScore = getMaxPossibleScore();
+    const passingScorePercent = 60; // fixed 60% threshold
+
+    const accepted = [];
+    const rejected = [];
+
+    candidates.forEach(c => {
+      // Convert to percentage for UI
+      c.scorePercent = maxPossibleScore > 0 ? Math.round((c.score / maxPossibleScore) * 100) : 0;
+      if (c.hasNegativeHit || c.scorePercent < passingScorePercent) {
+        rejected.push(c);
+      } else {
+        accepted.push(c);
+      }
+    });
 
     accepted.sort((a, b) => b.score - a.score);
     rejected.sort((a, b) => b.score - a.score);
@@ -159,6 +184,7 @@ const processFiles = async () => {
     setProcessing(false);
   }
 };
+
 
 
   const addPositiveKeyword = () => {
