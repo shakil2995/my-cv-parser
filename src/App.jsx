@@ -555,7 +555,7 @@ const processFiles = async () => {
 
       {/* CLEAN CV VIEWER MODAL */}
       {viewingCandidate && (
-        <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-gray-900/50  flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden">
 
             {/* Header */}
@@ -565,7 +565,7 @@ const processFiles = async () => {
               </h2>
               <button
                 onClick={closeViewer}
-                className="text-gray-500 hover:text-gray-700 text-3xl leading-none"
+                className="text-white hover:text-gray-700 text-3xl leading-none"
               >
                 &times;
               </button>
