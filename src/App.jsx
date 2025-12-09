@@ -277,9 +277,9 @@ const processFiles = async () => {
   };
 
   return (
- <div className="min-h-screen bg-gray-50 p-4 md:p-6">
+<div className="min-h-screen bg-gray-50 p-4 md:p-6">
   <div className="max-w-7xl mx-auto">
-    <div className="bg-white rounded-xl shadow p-6 md:p-8">
+    <div className="bg-white rounded-xl shadow-sm p-6 md:p-8">
       <div className="flex items-center gap-3 mb-6 md:mb-8">
         <FileText className="w-8 h-8 md:w-10 md:h-10 text-indigo-500" />
         <h1 className="text-2xl md:text-3xl font-bold text-gray-800">CV Parser & Scoring System</h1>
@@ -296,14 +296,14 @@ const processFiles = async () => {
               value={newPosKeyword}
               onChange={(e) => setNewPosKeyword(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && addPositiveKeyword()}
-              className="flex-1 px-4 py-2.5 text-gray-700 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+              className="flex-1 px-4 py-2.5 text-gray-700 bg-white border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-transparent"
             />
             <input
               type="number"
               placeholder="Weight"
               value={newPosWeight}
               onChange={(e) => setNewPosWeight(parseInt(e.target.value) || 5)}
-              className="w-24 px-4 py-2.5 text-gray-700 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+              className="w-24 px-4 py-2.5 text-gray-700 bg-white border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-transparent"
             />
             <button
               onClick={addPositiveKeyword}
@@ -322,7 +322,7 @@ const processFiles = async () => {
                   </span>
                   <button
                     onClick={() => removePositiveKeyword(index)}
-                    className="text-gray-500 hover:text-red-500 p-1.5 rounded transition-colors"
+                    className="text-gray-400 hover:text-red-400 p-1.5 rounded transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -342,7 +342,7 @@ const processFiles = async () => {
               value={newNegKeyword}
               onChange={(e) => setNewNegKeyword(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && addNegativeKeyword()}
-              className="flex-1 px-4 py-2.5 text-gray-700 border border-red-200 rounded-lg focus:ring-2 focus:ring-red-400 focus:border-transparent"
+              className="flex-1 px-4 py-2.5 text-gray-700 bg-white border border-red-200 rounded-lg focus:ring-2 focus:ring-red-400 focus:border-transparent"
             />
             <button
               onClick={addNegativeKeyword}
@@ -357,7 +357,7 @@ const processFiles = async () => {
                 <span className="text-gray-700">{keyword}</span>
                 <button
                   onClick={() => removeNegativeKeyword(index)}
-                  className="text-gray-500 hover:text-red-500 p-1.5 rounded transition-colors"
+                  className="text-gray-400 hover:text-red-400 p-1.5 rounded transition-colors"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -405,7 +405,7 @@ const processFiles = async () => {
       <button
         onClick={processFiles}
         disabled={processing || files.length === 0}
-        className="w-full py-3.5 md:py-4 bg-indigo-500 text-white rounded-lg font-medium text-base md:text-lg hover:bg-indigo-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+        className="w-full py-3.5 md:py-4 bg-indigo-500 text-white rounded-lg font-medium text-base md:text-lg hover:bg-indigo-600 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
       >
         {processing ? 'Processing CVs...' : `Process ${files.length} CV(s)`}
       </button>
@@ -439,7 +439,8 @@ const processFiles = async () => {
                 </button>
               </div>
             </div>
-<div className="space-y-5 max-h-[32rem] overflow-y-auto pr-3">              {results.accepted.map((candidate, idx) => (
+            <div className="space-y-5 max-h-[32rem] overflow-y-auto pr-3">
+              {results.accepted.map((candidate, idx) => (
                 <div key={idx} className="bg-white p-4 rounded-lg border border-green-100">
                   <div className="flex justify-between items-start mb-3">
                     <h3 className="font-medium text-gray-800 flex-1">{candidate.name}</h3>
@@ -552,51 +553,51 @@ const processFiles = async () => {
         </div>
       )}
 
-     {/* CLEAN CV VIEWER MODAL */}
-{viewingCandidate && (
-  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-    <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden">
+      {/* CLEAN CV VIEWER MODAL */}
+      {viewingCandidate && (
+        <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden">
 
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b">
-        <h2 className="text-lg font-semibold text-gray-800 truncate">
-          {viewingCandidate.name}
-        </h2>
-        <button
-          onClick={closeViewer}
-          className="text-gray-500 hover:text-gray-700 text-3xl leading-none"
-        >
-          &times;
-        </button>
-      </div>
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-800 truncate">
+                {viewingCandidate.name}
+              </h2>
+              <button
+                onClick={closeViewer}
+                className="text-gray-500 hover:text-gray-700 text-3xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
 
-      {/* PDF Viewer */}
-      <div className="flex-1 overflow-hidden bg-gray-100">
-        {pdfUrl ? (
-          <iframe
-            src={pdfUrl}
-            className="w-full h-full border-0"
-          />
-        ) : (
-          <div className="flex items-center justify-center h-full text-gray-500">
-            Loading PDF...
+            {/* PDF Viewer */}
+            <div className="flex-1 overflow-hidden bg-gray-100">
+              {pdfUrl ? (
+                <iframe
+                  src={pdfUrl}
+                  className="w-full h-full border-0"
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full text-gray-500">
+                  Loading PDF...
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-gray-200 text-right">
+              <button
+                onClick={closeViewer}
+                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+
           </div>
-        )}
-      </div>
-
-      {/* Footer */}
-      <div className="p-4 border-t text-right">
-        <button
-          onClick={closeViewer}
-          className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800"
-        >
-          Close
-        </button>
-      </div>
-
-    </div>
-  </div>
-)}
+        </div>
+      )}
 
     </div>
   </div>
