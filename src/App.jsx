@@ -308,7 +308,7 @@ const processFiles = async () => {
     <div className="bg-white rounded-xl shadow-sm p-6 md:p-8">
       <div className="flex items-center gap-3 mb-6 md:mb-8">
         <FileText className="w-8 h-8 md:w-10 md:h-10 text-indigo-500" />
-        <h1 className="text-2xl md:text-3xl font-bold text-gray-800">CV Parser & Scoring System</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-gray-800">CV Scoring System</h1>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
