@@ -552,108 +552,52 @@ const processFiles = async () => {
         </div>
       )}
 
-      {/* CV Viewer Modal */}
-      {viewingCandidate && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-lg max-w-6xl w-full max-h-[95vh] overflow-hidden flex flex-col">
-            <div className="p-6 border-b bg-blue-50">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <h2 className="text-xl md:text-2xl font-bold text-gray-800 mb-2">{viewingCandidate.name}</h2>
-                  <div className="flex flex-wrap gap-2">
-                    <span className="inline-block bg-indigo-500 text-white px-3 py-1 rounded-full text-sm font-bold">
-                      Score: {viewingCandidate.score}
-                    </span>
-                    {viewingCandidate.foundKeywords.length > 0 && (
-                      <span className="inline-block bg-green-500 text-white px-3 py-1 rounded-full text-sm font-bold">
-                        {viewingCandidate.foundKeywords.length} Matches
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <button
-                  onClick={closeViewer}
-                  className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-            
-            <div className="p-6 overflow-y-auto flex-1">
-              {viewingCandidate.foundKeywords.length > 0 && (
-                <div className="mb-6 bg-white p-4 rounded-lg border border-green-100">
-                  <h3 className="font-medium text-green-800 mb-3 flex items-center gap-2">
-                    <CheckCircle className="w-5 h-5 text-green-500" />
-                    Positive Matches:
-                  </h3>
-                  <div className="flex flex-wrap gap-2">
-                    {viewingCandidate.foundKeywords.map((k, i) => (
-                      <span key={i} className="bg-green-50 text-green-700 px-3 py-2 rounded border border-green-200">
-                        <strong>{k.keyword}</strong> - {k.matches} matches ({k.points} pts)
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+     {/* CLEAN CV VIEWER MODAL */}
+{viewingCandidate && (
+  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden">
 
-              {viewingCandidate.foundNegatives.length > 0 && (
-                <div className="mb-6 bg-white p-4 rounded-lg border border-red-100">
-                  <h3 className="font-medium text-red-800 mb-3 flex items-center gap-2">
-                    <XCircle className="w-5 h-5 text-red-500" />
-                    Negative Matches:
-                  </h3>
-                  <div className="flex flex-wrap gap-2">
-                    {viewingCandidate.foundNegatives.map((k, i) => (
-                      <span key={i} className="bg-red-50 text-red-700 px-3 py-2 rounded border border-red-200">
-                        <strong>{k.keyword}</strong> - {k.matches} matches
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 border-b">
+        <h2 className="text-lg font-semibold text-gray-800 truncate">
+          {viewingCandidate.name}
+        </h2>
+        <button
+          onClick={closeViewer}
+          className="text-gray-500 hover:text-gray-700 text-3xl leading-none"
+        >
+          &times;
+        </button>
+      </div>
 
-              {pdfUrl ? (
-                <div className="bg-white rounded-lg overflow-hidden border border-gray-200">
-                  <div className="bg-gray-700 text-white p-3 flex items-center justify-between">
-                    <h3 className="font-medium flex items-center gap-2">
-                      <FileText className="w-5 h-5" />
-                      PDF Preview
-                    </h3>
-                    <span className="text-sm text-gray-300">Use scroll to navigate pages</span>
-                  </div>
-                  <iframe
-                    src={pdfUrl}
-                    className="w-full h-[500px] md:h-[600px] border-0"
-                    title="CV Preview"
-                  />
-                </div>
-              ) : (
-                <div className="bg-white p-8 rounded-lg border border-gray-200 text-center">
-                  <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                  <p className="text-gray-600">PDF preview not available</p>
-                </div>
-              )}
-            </div>
-
-            <div className="p-6 border-t bg-gray-50 flex flex-col sm:flex-row gap-3">
-              <button
-                onClick={() => downloadCV(viewingCandidate.name)}
-                className="flex-1 px-4 py-3 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors flex items-center justify-center gap-2 font-medium"
-              >
-                <Download className="w-5 h-5" />
-                Download Original PDF
-              </button>
-              <button
-                onClick={closeViewer}
-                className="px-6 py-3 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition-colors font-medium"
-              >
-                Close
-              </button>
-            </div>
+      {/* PDF Viewer */}
+      <div className="flex-1 overflow-hidden bg-gray-100">
+        {pdfUrl ? (
+          <iframe
+            src={pdfUrl}
+            className="w-full h-full border-0"
+          />
+        ) : (
+          <div className="flex items-center justify-center h-full text-gray-500">
+            Loading PDF...
           </div>
-        </div>
-      )}
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="p-4 border-t text-right">
+        <button
+          onClick={closeViewer}
+          className="px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800"
+        >
+          Close
+        </button>
+      </div>
+
+    </div>
+  </div>
+)}
+
     </div>
   </div>
 </div>
