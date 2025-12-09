@@ -85,7 +85,7 @@ const calculateScore = (text) => {
     if (matches.length > 0) {
       hasNegativeHit = true;
       foundNegatives.push({ keyword, matches: matches.length });
-      score -= 20 * matches.length; // heavy penalty
+      score -= 5 * matches.length; // heavy penalty
     }
   });
 
