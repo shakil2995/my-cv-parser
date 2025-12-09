@@ -1,681 +1,656 @@
-import React, { useState } from "react";
-import {
-  Upload,
-  Plus,
-  X,
-  Check,
-  XCircle,
-  Award,
-  Search,
-  Download,
-  Settings,
-  FolderArchive,
-  Filter,
-} from "lucide-react";
-import { v4 as uuidv4 } from "uuid";
-import JSZip from "jszip";
-export default function CVParser() {
-  const [cvs, setCvs] = useState([]);
-  const [criteria, setCriteria] = useState([]);
-  const [rejectKeywords, setRejectKeywords] = useState([]);
-  const [newKeyword, setNewKeyword] = useState("");
-  const [newRejectKeyword, setNewRejectKeyword] = useState("");
-  const [newWeight, setNewWeight] = useState(10);
-  const [minScore, setMinScore] = useState(50);
-  const [searchTerm, setSearchTerm] = useState("");
+import React, { useState, useCallback } from 'react';
+import { Upload, FileText, CheckCircle, XCircle, Download, Plus, Trash2, AlertCircle, Eye, File } from 'lucide-react';
+
+const CVParserApp = () => {
+  const [files, setFiles] = useState([]);
+  const [positiveKeywords, setPositiveKeywords] = useState([
+    { keyword: 'react', weight: 10 },
+    { keyword: 'javascript', weight: 8 },
+    { keyword: 'node.js', weight: 8 }
+  ]);
+  const [negativeKeywords, setNegativeKeywords] = useState(['no experience', 'beginner']);
+  const [processing, setProcessing] = useState(false);
+  const [results, setResults] = useState({ accepted: [], rejected: [] });
+  const [newPosKeyword, setNewPosKeyword] = useState('');
+  const [newPosWeight, setNewPosWeight] = useState(5);
+  const [newNegKeyword, setNewNegKeyword] = useState('');
+  const [viewingCandidate, setViewingCandidate] = useState(null);
+  const [fileMap, setFileMap] = useState(new Map());
+  const [pdfUrl, setPdfUrl] = useState(null);
+
+  const loadPdfJs = async () => {
+    if (window.pdfjsLib) return window.pdfjsLib;
+    
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      script.onload = () => {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        resolve(window.pdfjsLib);
+      };
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  };
+
+  const extractTextFromPdf = async (file) => {
+    try {
+      const pdfjsLib = await loadPdfJs();
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = '';
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join(' ');
+        fullText += pageText + ' ';
+      }
+
+      return fullText;
+    } catch (error) {
+      console.error('PDF extraction error:', error);
+      throw new Error(`Failed to extract text from ${file.name}`);
+    }
+  };
+
+  const calculateScore = (text) => {
+    const lowerText = text.toLowerCase();
+    let score = 0;
+    const foundKeywords = [];
+    const foundNegatives = [];
+
+    positiveKeywords.forEach(({ keyword, weight }) => {
+      const regex = new RegExp(keyword.toLowerCase(), 'gi');
+      const matches = (lowerText.match(regex) || []).length;
+      if (matches > 0) {
+        const points = matches * weight;
+        score += points;
+        foundKeywords.push({ keyword, matches, points });
+      }
+    });
+
+    negativeKeywords.forEach(keyword => {
+      const regex = new RegExp(keyword.toLowerCase(), 'gi');
+      const matches = (lowerText.match(regex) || []).length;
+      if (matches > 0) {
+        score -= matches * 5;
+        foundNegatives.push({ keyword, matches });
+      }
+    });
+
+    return { score, foundKeywords, foundNegatives };
+  };
 
   const handleFileUpload = async (e) => {
-    const files = Array.from(e.target.files);
-    const newCVs = await Promise.all(
-      files.map(async (file) => {
-        // Keep original file object for download
-        return {
-          id: Date.now() + Math.random(),
-          name: file.name,
-          content: (await file.text()).toLowerCase(),
-          originalContent: await file.text(), // Keep original text for content display
-          originalFile: file, // Add this line to keep the original file object
-          uploadDate: new Date(),
-          status: "pending",
-          score: 0,
-          matchedCriteria: [],
-          rejectedBy: [],
-        };
-      })
-    );
+    const uploadedFiles = Array.from(e.target.files);
+    const pdfFiles = [];
+    const newFileMap = new Map(fileMap);
 
-    const scoredCVs = newCVs.map((cv) => scoreCV(cv));
-    setCvs([...cvs, ...scoredCVs]);
-  };
-  const addCriterion = () => {
-    if (newKeyword.trim()) {
-      const newCriterion = {
-        id: uuidv4(),
-        keyword: newKeyword.trim(),
-        weight: newWeight,
-        type: "must-have", // Default type
-      };
-      const updatedCriteria = [...criteria, newCriterion];
-      setCriteria(updatedCriteria);
-      setNewKeyword("");
-
-      // Reset to default weight for next entry
-      setNewWeight(10);
-
-      // Only rescore if there are CVs
-      if (cvs.length > 0) {
-        const rescoredCVs = cvs.map((cv) =>
-          scoreCV(cv, updatedCriteria, rejectKeywords)
-        );
-        setCvs(rescoredCVs);
+    for (const file of uploadedFiles) {
+      if (file.type === 'application/pdf') {
+        pdfFiles.push(file);
+        newFileMap.set(file.name, file);
+      } else if (file.name.endsWith('.zip')) {
+        // Note: Real zip extraction would require JSZip library
+        alert('Zip file detected. In production, this would extract PDFs from the zip.');
       }
     }
-  };
-  const addRejectKeyword = () => {
-    if (newRejectKeyword.trim()) {
-      const updatedRejectKeywords = [
-        ...rejectKeywords,
-        newRejectKeyword.trim(),
-      ];
-      setRejectKeywords(updatedRejectKeywords);
-      setNewRejectKeyword("");
 
-      // Only rescore if there are CVs
-      if (cvs.length > 0) {
-        const rescoredCVs = cvs.map((cv) =>
-          scoreCV(cv, criteria, updatedRejectKeywords)
-        );
-        setCvs(rescoredCVs);
+    setFiles(prev => [...prev, ...pdfFiles]);
+    setFileMap(newFileMap);
+  };
+
+  const processFiles = async () => {
+    if (files.length === 0) {
+      alert('Please upload CV files first');
+      return;
+    }
+
+    setProcessing(true);
+    const accepted = [];
+    const rejected = [];
+
+    try {
+      for (const file of files) {
+        try {
+          const text = await extractTextFromPdf(file);
+          const { score, foundKeywords, foundNegatives } = calculateScore(text);
+          
+          const candidate = {
+            name: file.name,
+            score,
+            foundKeywords,
+            foundNegatives,
+            text: text.substring(0, 500) + '...',
+            fullText: text // Store full text for viewing
+          };
+
+          if (score >= 20) {
+            accepted.push(candidate);
+          } else {
+            rejected.push(candidate);
+          }
+        } catch (error) {
+          rejected.push({
+            name: file.name,
+            score: 0,
+            error: error.message,
+            foundKeywords: [],
+            foundNegatives: [],
+            fullText: 'Error loading CV'
+          });
+        }
       }
+
+      accepted.sort((a, b) => b.score - a.score);
+      rejected.sort((a, b) => b.score - a.score);
+
+      setResults({ accepted, rejected });
+    } catch (error) {
+      alert('Error processing files: ' + error.message);
+    } finally {
+      setProcessing(false);
     }
   };
 
-  const removeRejectKeyword = (keyword) => {
-    const updatedRejectKeywords = rejectKeywords.filter((k) => k !== keyword);
-    setRejectKeywords(updatedRejectKeywords);
-    const rescoredCVs = cvs.map((cv) =>
-      scoreCV(cv, criteria, updatedRejectKeywords)
-    );
-    setCvs(rescoredCVs);
-  };
-
-  const removeCriterion = (id) => {
-    const updatedCriteria = criteria.filter((c) => c.id !== id);
-    setCriteria(updatedCriteria);
-    const rescoredCVs = cvs.map((cv) =>
-      scoreCV(cv, updatedCriteria, rejectKeywords)
-    );
-    setCvs(rescoredCVs);
-  };
-
-  const updateCriterionType = (id, type) => {
-    const updatedCriteria = criteria.map((c) =>
-      c.id === id ? { ...c, type } : c
-    );
-    setCriteria(updatedCriteria);
-    const rescoredCVs = cvs.map((cv) =>
-      scoreCV(cv, updatedCriteria, rejectKeywords)
-    );
-    setCvs(rescoredCVs);
-  };
-
-const scoreCV = (cv, criteriaList = criteria, rejectList = rejectKeywords) => {
-  if (criteriaList.length === 0 && rejectList.length === 0) {
-    return { ...cv, score: 0, matchedCriteria: [], status: 'pending', rejectedBy: [] };
-  }
-
-  let totalScore = 0;
-  let maxScore = 0;
-  const matched = [];
-  let hasExcludingKeyword = false;
-  const rejectedBy = [];
-
-  // Check reject keywords first (from reject list)
-  rejectList.forEach(keyword => {
-    const keywordLower = keyword.toLowerCase();
-    const occurrences = (cv.content.match(new RegExp(keywordLower, 'g')) || []).length;
-    if (occurrences > 0) {
-      hasExcludingKeyword = true;
-      rejectedBy.push(keyword);
+  const addPositiveKeyword = () => {
+    if (newPosKeyword.trim()) {
+      setPositiveKeywords([...positiveKeywords, { keyword: newPosKeyword.trim(), weight: newPosWeight }]);
+      setNewPosKeyword('');
+      setNewPosWeight(5);
     }
-  });
+  };
 
-  // Track missing must-have criteria
-  const missingMustHaves = [];
-
-  // Check criteria
-  criteriaList.forEach(criterion => {
-    const keywordLower = criterion.keyword.toLowerCase();
-    const occurrences = (cv.content.match(new RegExp(keywordLower, 'g')) || []).length;
-    
-    if (criterion.type === 'must-have') {
-      maxScore += criterion.weight;
-      if (occurrences > 0) {
-        totalScore += criterion.weight;
-        matched.push({ ...criterion, occurrences });
-      } else {
-        // Track missing must-haves
-        missingMustHaves.push(criterion.keyword);
-      }
-    } else if (criterion.type === 'nice-to-have') {
-      maxScore += criterion.weight;
-      if (occurrences > 0) {
-        totalScore += criterion.weight;
-        matched.push({ ...criterion, occurrences });
-      }
-    } else if (criterion.type === 'excluding') {
-      if (occurrences > 0) {
-        hasExcludingKeyword = true;
-        rejectedBy.push(criterion.keyword);
-      }
+  const addNegativeKeyword = () => {
+    if (newNegKeyword.trim()) {
+      setNegativeKeywords([...negativeKeywords, newNegKeyword.trim()]);
+      setNewNegKeyword('');
     }
-  });
-
-  const scorePercentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
-  
-  let status;
-  
-  // Determine status
-  if (hasExcludingKeyword) {
-    // Auto-reject if any excluding keyword is found
-    status = 'rejected';
-  } else if (missingMustHaves.length > 0) {
-    // Reject if any must-have criteria are missing
-    status = 'rejected';
-    // Add missing must-haves to rejectedBy for clarity
-    missingMustHaves.forEach(keyword => {
-      rejectedBy.push(`Missing: ${keyword}`);
-    });
-  } else if (maxScore === 0) {
-    // No criteria defined (only reject keywords which weren't found)
-    status = 'pending';
-  } else if (scorePercentage >= minScore) {
-    status = 'accepted';
-  } else {
-    status = 'rejected';
-    rejectedBy.push(`Score ${scorePercentage}% < ${minScore}%`);
-  }
-
-  return {
-    ...cv,
-    score: scorePercentage,
-    matchedCriteria: matched,
-    status,
-    rejectedBy
-  };
-};
-
-  const applyScoring = () => {
-    const rescoredCVs = cvs.map((cv) => scoreCV(cv));
-    setCvs(rescoredCVs);
   };
 
-  const deleteCV = (id) => {
-    setCvs(cvs.filter((cv) => cv.id !== id));
+  const removePositiveKeyword = (index) => {
+    setPositiveKeywords(positiveKeywords.filter((_, i) => i !== index));
   };
 
-  const acceptedCVs = cvs
-    .filter((cv) => cv.status === "accepted")
-    .sort((a, b) => b.score - a.score);
-  const rejectedCVs = cvs
-    .filter((cv) => cv.status === "rejected")
-    .sort((a, b) => b.score - a.score);
-  const pendingCVs = cvs.filter((cv) => cv.status === "pending");
+  const removeNegativeKeyword = (index) => {
+    setNegativeKeywords(negativeKeywords.filter((_, i) => i !== index));
+  };
 
-  const filteredAccepted = acceptedCVs.filter((cv) =>
-    cv.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-  const filteredRejected = rejectedCVs.filter((cv) =>
-    cv.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const exportResults = () => {
-    const data = cvs.map((cv) => ({
-      name: cv.name,
-      status: cv.status,
-      score: cv.score,
-      matchedKeywords: cv.matchedCriteria.map((c) => c.keyword).join("; "),
-      rejectedBy: cv.rejectedBy.join("; "),
-    }));
+  const exportResults = (type) => {
+    const data = type === 'accepted' ? results.accepted : results.rejected;
     const csv = [
-      "Name,Status,Score,Matched Keywords,Rejected By",
-      ...data.map(
-        (row) =>
-          `"${row.name}","${row.status}",${row.score},"${row.matchedKeywords}","${row.rejectedBy}"`
-      ),
-    ].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+      ['Name', 'Score', 'Positive Keywords', 'Negative Keywords'],
+      ...data.map(c => [
+        c.name,
+        c.score,
+        c.foundKeywords.map(k => `${k.keyword}(${k.matches})`).join('; '),
+        c.foundNegatives.map(k => `${k.keyword}(${k.matches})`).join('; ')
+      ])
+    ].map(row => row.join(',')).join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const a = document.createElement('a');
     a.href = url;
-    a.download = "cv-results.csv";
+    a.download = `${type}_candidates.csv`;
+    a.click();
+  };
+
+  const viewCV = (candidate) => {
+    setViewingCandidate(candidate);
+    const file = fileMap.get(candidate.name);
+    if (file) {
+      // Clean up previous URL if exists
+      if (pdfUrl) {
+        URL.revokeObjectURL(pdfUrl);
+      }
+      // Create new URL for PDF viewing
+      const url = URL.createObjectURL(file);
+      setPdfUrl(url);
+    }
+  };
+
+  const closeViewer = () => {
+    if (pdfUrl) {
+      URL.revokeObjectURL(pdfUrl);
+    }
+    setViewingCandidate(null);
+    setPdfUrl(null);
+  };
+
+  const downloadCV = (fileName) => {
+    const file = fileMap.get(fileName);
+    if (file) {
+      const url = URL.createObjectURL(file);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const downloadAllAsZip = async (type) => {
+    const candidates = type === 'accepted' ? results.accepted : results.rejected;
+    
+    if (candidates.length === 0) {
+      alert('No files to download');
+      return;
+    }
+
+    // Load JSZip from CDN
+    if (!window.JSZip) {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+      await new Promise((resolve, reject) => {
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+    }
+
+    const zip = new window.JSZip();
+    const folder = zip.folder(type === 'accepted' ? 'Accepted_CVs' : 'Rejected_CVs');
+
+    for (const candidate of candidates) {
+      const file = fileMap.get(candidate.name);
+      if (file) {
+        folder.file(candidate.name, file);
+      }
+    }
+
+    const content = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(content);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${type}_candidates.zip`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-const downloadCVsByStatus = async (status) => {
-  const filteredCVs = cvs.filter(cv => cv.status === status);
-  if (filteredCVs.length === 0) {
-    alert(`No ${status} CVs to download`);
-    return;
-  }
-
-  // Dynamically import JSZip to reduce bundle size
-  const JSZip = (await import('jszip')).default;
-  const zip = new JSZip();
-
-  // Add each CV to the zip file
-  filteredCVs.forEach((cv, index) => {
-    const fileName = `${status}_${index + 1}_${cv.name}`;
-    
-    // Use original file object if available, otherwise create from content
-    if (cv.originalFile) {
-      zip.file(fileName, cv.originalFile);
-    } else {
-      // Fallback to creating blob from original content
-      zip.file(fileName, cv.originalContent);
-    }
-  });
-
-  // Generate the zip file
-  const zipBlob = await zip.generateAsync({ type: 'blob' });
-  
-  // Create download link
-  const url = URL.createObjectURL(zipBlob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${status}_CVs_${new Date().toISOString().slice(0, 10)}.zip`;
-  a.click();
-  
-  // Clean up
-  URL.revokeObjectURL(url);
-};
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-6">
-      <div className="w-full mx-auto px-4">
-        {" "}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-6 border border-white/20">
-          <h1 className="text-4xl font-bold text-white mb-2">CV Parser</h1>
-          <p className="text-purple-200">
-            Define criteria, upload CVs, and automatically rank candidates
-          </p>
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1 space-y-6">
-            <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-              <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
-                <Search className="w-5 h-5" />
-                Matching Criteria
-              </h2>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
+      <div className="max-w-7xl mx-auto">
+        <div className="bg-white rounded-xl shadow-2xl p-8">
+          <div className="flex items-center gap-3 mb-8">
+            <FileText className="w-10 h-10 text-indigo-600" />
+            <h1 className="text-4xl font-bold text-gray-800">CV Parser & Scoring System</h1>
+          </div>
 
-              <div className="space-y-3 mb-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            {/* Positive Keywords */}
+            <div className="bg-green-50 rounded-lg p-6">
+              <h2 className="text-xl font-semibold text-green-800 mb-4">Positive Keywords (Weighted)</h2>
+              <div className="flex gap-2 mb-4">
                 <input
                   type="text"
-                  placeholder="Enter keyword (e.g., Python, MBA)"
-                  value={newKeyword}
-                  onChange={(e) => setNewKeyword(e.target.value)}
-                  onKeyPress={(e) => e.key === "Enter" && addCriterion()}
-                  className="w-full px-4 py-2 bg-white/20 border border-white/30 rounded-lg text-white placeholder-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                  placeholder="Keyword"
+                  value={newPosKeyword}
+                  onChange={(e) => setNewPosKeyword(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && addPositiveKeyword()}
+                  className="flex-1 px-3 py-2 border border-green-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
-
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <label className="block text-xs text-purple-200 mb-1">
-                      Weight
-                    </label>
-                    <input
-                      type="number"
-                      value={newWeight}
-                      onChange={(e) =>
-                        setNewWeight(parseInt(e.target.value) || 0)
-                      }
-                      min="1"
-                      max="100"
-                      className="w-full px-3 py-2 bg-white/20 border border-white/30 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-400"
-                    />
-                  </div>
-                  <button
-                    onClick={addCriterion}
-                    className="mt-6 px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition flex items-center gap-2"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add
-                  </button>
-                </div>
+                <input
+                  type="number"
+                  placeholder="Weight"
+                  value={newPosWeight}
+                  onChange={(e) => setNewPosWeight(parseInt(e.target.value) || 5)}
+                  className="w-20 px-3 py-2 border border-green-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+                <button
+                  onClick={addPositiveKeyword}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                >
+                  <Plus className="w-5 h-5" />
+                </button>
               </div>
-
-              {criteria.length > 0 && (
-                <div className="space-y-2 max-h-48 overflow-y-auto mb-4">
-                  {criteria.map((c) => (
-                    <div
-                      key={c.id}
-                      className="bg-white/20 rounded-lg p-3 border border-white/30"
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <span className="text-white font-medium">
-                          {c.keyword}
-                        </span>
-                        <button
-                          onClick={() => removeCriterion(c.id)}
-                          className="text-red-300 hover:text-red-100"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-purple-200">
-                          Weight: {c.weight}
-                        </span>
-                      </div>
-                      <select
-                        value={c.type}
-                        onChange={(e) =>
-                          updateCriterionType(c.id, e.target.value)
-                        }
-                        className="mt-2 w-full px-2 py-1 bg-white/20 border border-white/30 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
-                      >
-                        <option value="must-have" className="bg-slate-800">
-                          Must Have
-                        </option>
-                        <option value="nice-to-have" className="bg-slate-800">
-                          Nice to Have
-                        </option>
-                        <option value="excluding" className="bg-slate-800">
-                          Excluding
-                        </option>
-                      </select>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="border-t border-white/20 pt-4 mt-4">
-                <h3 className="text-sm font-semibold text-red-300 mb-3 flex items-center gap-2">
-                  <XCircle className="w-4 h-4" />
-                  Auto-Reject Keywords
-                </h3>
-                <div className="flex gap-2 mb-3">
-                  <input
-                    type="text"
-                    placeholder="e.g., competitor name"
-                    value={newRejectKeyword}
-                    onChange={(e) => setNewRejectKeyword(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && addRejectKeyword()}
-                    className="flex-1 px-3 py-2 bg-white/20 border border-white/30 rounded-lg text-white placeholder-purple-200 focus:outline-none focus:ring-2 focus:ring-red-400 text-sm"
-                  />
-                  <button
-                    onClick={addRejectKeyword}
-                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition flex items-center gap-2"
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                </div>
-                {rejectKeywords.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {rejectKeywords.map((keyword, i) => (
-                      <span
-                        key={i}
-                        className="px-2 py-1 bg-red-600/80 text-white text-xs rounded-full flex items-center gap-1"
-                      >
-                        {keyword}
-                        <button
-                          onClick={() => removeRejectKeyword(keyword)}
-                          className="hover:text-red-200"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {positiveKeywords.map((item, index) => (
+                  <div key={index} className="flex items-center justify-between bg-white p-3 rounded-lg">
+                    <span className="text-gray-700">{item.keyword}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="bg-green-200 text-green-800 px-2 py-1 rounded text-sm font-semibold">
+                        Weight: {item.weight}
                       </span>
-                    ))}
+                      <button
+                        onClick={() => removePositiveKeyword(index)}
+                        className="text-red-500 hover:text-red-700"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                )}
+                ))}
               </div>
             </div>
 
-            <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-              <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                <Settings className="w-5 h-5" />
-                Settings
-              </h3>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm text-purple-200 mb-2">
-                    Minimum Pass Score: {minScore}%
-                  </label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={minScore}
-                    onChange={(e) => {
-                      setMinScore(parseInt(e.target.value));
-                      applyScoring();
-                    }}
-                    className="w-full"
-                  />
-                </div>
-
-                <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-purple-400 rounded-lg cursor-pointer hover:border-purple-300 hover:bg-white/5 transition">
-                  <Upload className="w-6 h-6 text-purple-300 mb-1" />
-                  <span className="text-sm text-purple-200">Upload CVs</span>
-                  <input
-                    type="file"
-                    multiple
-                    accept=".pdf,.txt,.doc,.docx"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
-                </label>
-
-                {cvs.length > 0 && (
-                  <div className="space-y-2">
+            {/* Negative Keywords */}
+            <div className="bg-red-50 rounded-lg p-6">
+              <h2 className="text-xl font-semibold text-red-800 mb-4">Negative Keywords</h2>
+              <div className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  placeholder="Enter negative keyword"
+                  value={newNegKeyword}
+                  onChange={(e) => setNewNegKeyword(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && addNegativeKeyword()}
+                  className="flex-1 px-3 py-2 border border-red-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                />
+                <button
+                  onClick={addNegativeKeyword}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+                >
+                  <Plus className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {negativeKeywords.map((keyword, index) => (
+                  <div key={index} className="flex items-center justify-between bg-white p-3 rounded-lg">
+                    <span className="text-gray-700">{keyword}</span>
                     <button
-                      onClick={exportResults}
-                      className="w-full bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg transition flex items-center justify-center gap-2"
+                      onClick={() => removeNegativeKeyword(index)}
+                      className="text-red-500 hover:text-red-700"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* File Upload */}
+          <div className="mb-8">
+            <label className="flex flex-col items-center justify-center w-full h-48 border-4 border-dashed border-indigo-300 rounded-xl cursor-pointer bg-indigo-50 hover:bg-indigo-100 transition">
+              <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                <Upload className="w-16 h-16 mb-4 text-indigo-500" />
+                <p className="mb-2 text-lg font-semibold text-gray-700">
+                  Click to upload CVs (PDF or ZIP)
+                </p>
+                <p className="text-sm text-gray-500">Supports bulk upload and zip files</p>
+              </div>
+              <input
+                type="file"
+                multiple
+                accept=".pdf,.zip"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </label>
+            {files.length > 0 && (
+              <div className="mt-4">
+                <p className="text-sm font-semibold text-gray-700 mb-2">
+                  {files.length} file(s) uploaded
+                </p>
+                <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
+                  {files.map((file, idx) => (
+                    <div key={idx} className="text-xs text-gray-600 bg-gray-100 p-2 rounded">
+                      {file.name}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Process Button */}
+          <button
+            onClick={processFiles}
+            disabled={processing || files.length === 0}
+            className="w-full py-4 bg-indigo-600 text-white rounded-xl font-semibold text-lg hover:bg-indigo-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            {processing ? 'Processing CVs...' : `Process ${files.length} CV(s)`}
+          </button>
+
+          {/* Results */}
+          {(results.accepted.length > 0 || results.rejected.length > 0) && (
+            <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Accepted List */}
+              <div className="bg-green-50 rounded-lg p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-6 h-6 text-green-600" />
+                    <h2 className="text-2xl font-bold text-green-800">
+                      Accepted ({results.accepted.length})
+                    </h2>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => downloadAllAsZip('accepted')}
+                      className="px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-1"
                     >
                       <Download className="w-4 h-4" />
-                      Export CSV
+                      ZIP
                     </button>
-
                     <button
-                      onClick={() => downloadCVsByStatus("accepted")}
-                      className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg transition flex items-center justify-center gap-2"
+                      onClick={() => exportResults('accepted')}
+                      className="px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-1"
                     >
-                      <FolderArchive className="w-4 h-4" />
-                      Download Accepted
-                    </button>
-
-                    <button
-                      onClick={() => downloadCVsByStatus("rejected")}
-                      className="w-full bg-orange-600 hover:bg-orange-700 text-white py-2 rounded-lg transition flex items-center justify-center gap-2"
-                    >
-                      <FolderArchive className="w-4 h-4" />
-                      Download Rejected
+                      <File className="w-4 h-4" />
+                      CSV
                     </button>
                   </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="lg:col-span-2 space-y-6">
-            <div className="grid grid-cols-3 gap-4">
-              <div className="bg-green-500/20 backdrop-blur-lg rounded-xl p-4 border border-green-400/30">
-                <div className="text-3xl font-bold text-green-300">
-                  {acceptedCVs.length}
                 </div>
-                <div className="text-green-200 text-sm">Accepted</div>
-              </div>
-              <div className="bg-red-500/20 backdrop-blur-lg rounded-xl p-4 border border-red-400/30">
-                <div className="text-3xl font-bold text-red-300">
-                  {rejectedCVs.length}
-                </div>
-                <div className="text-red-200 text-sm">Rejected</div>
-              </div>
-              <div className="bg-yellow-500/20 backdrop-blur-lg rounded-xl p-4 border border-yellow-400/30">
-                <div className="text-3xl font-bold text-yellow-300">
-                  {pendingCVs.length}
-                </div>
-                <div className="text-yellow-200 text-sm">Pending</div>
-              </div>
-            </div>
-
-            {cvs.length > 0 && (
-              <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
-                <div className="flex items-center gap-2">
-                  <Filter className="w-4 h-4 text-purple-300" />
-                  <input
-                    type="text"
-                    placeholder="Search CVs..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="flex-1 px-3 py-2 bg-white/20 border border-white/30 rounded-lg text-white placeholder-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-400"
-                  />
-                </div>
-              </div>
-            )}
-
-            {filteredAccepted.length > 0 && (
-              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-                <h3 className="text-xl font-semibold text-green-300 mb-4 flex items-center gap-2">
-                  <Check className="w-5 h-5" />
-                  Accepted Candidates
-                </h3>
                 <div className="space-y-3 max-h-96 overflow-y-auto">
-                  {filteredAccepted.map((cv, index) => (
-                    <div
-                      key={cv.id}
-                      className="bg-green-500/20 rounded-lg p-4 border border-green-400/30"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <Award className="w-5 h-5 text-yellow-400" />
-                            <span className="text-white font-semibold">
-                              #{index + 1} - {cv.name}
+                  {results.accepted.map((candidate, idx) => (
+                    <div key={idx} className="bg-white p-4 rounded-lg shadow">
+                      <div className="flex justify-between items-start mb-2">
+                        <h3 className="font-semibold text-gray-800 flex-1">{candidate.name}</h3>
+                        <span className="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                          {candidate.score}
+                        </span>
+                      </div>
+                      {candidate.foundKeywords.length > 0 && (
+                        <div className="text-xs text-gray-600 mt-2 mb-3">
+                          <span className="font-semibold">Matches: </span>
+                          {candidate.foundKeywords.map((k, i) => (
+                            <span key={i} className="bg-green-200 px-2 py-1 rounded mr-1">
+                              {k.keyword} ({k.matches}×{k.points}pts)
                             </span>
-                          </div>
-                          <div className="mt-2 flex items-center gap-3">
-                            <div className="text-2xl font-bold text-green-300">
-                              {cv.score}%
-                            </div>
-                            <div className="flex-1 bg-white/20 rounded-full h-3">
-                              <div
-                                className="bg-green-400 h-3 rounded-full transition-all"
-                                style={{ width: `${cv.score}%` }}
-                              />
-                            </div>
-                          </div>
-                          {cv.matchedCriteria.length > 0 && (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {cv.matchedCriteria.map((mc, i) => (
-                                <span
-                                  key={i}
-                                  className="px-2 py-1 bg-green-600 text-white text-xs rounded-full"
-                                >
-                                  ✓ {mc.keyword} ({mc.occurrences}x)
-                                </span>
-                              ))}
-                            </div>
-                          )}
+                          ))}
                         </div>
+                      )}
+                      <div className="flex gap-2">
                         <button
-                          onClick={() => deleteCV(cv.id)}
-                          className="text-red-300 hover:text-red-100 ml-2"
+                          onClick={() => viewCV(candidate)}
+                          className="flex-1 px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition flex items-center justify-center gap-1 text-sm"
                         >
-                          <X className="w-5 h-5" />
+                          <Eye className="w-4 h-4" />
+                          View
+                        </button>
+                        <button
+                          onClick={() => downloadCV(candidate.name)}
+                          className="flex-1 px-3 py-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition flex items-center justify-center gap-1 text-sm"
+                        >
+                          <Download className="w-4 h-4" />
+                          Download
                         </button>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
-            )}
 
-            {filteredRejected.length > 0 && (
-              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-                <h3 className="text-xl font-semibold text-red-300 mb-4 flex items-center gap-2">
-                  <XCircle className="w-5 h-5" />
-                  Rejected Candidates
-                </h3>
-                <div className="space-y-3 max-h-64 overflow-y-auto">
-                  {filteredRejected.map((cv) => (
-                    <div
-                      key={cv.id}
-                      className="bg-red-500/20 rounded-lg p-4 border border-red-400/30"
+              {/* Rejected List */}
+              <div className="bg-red-50 rounded-lg p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <XCircle className="w-6 h-6 text-red-600" />
+                    <h2 className="text-2xl font-bold text-red-800">
+                      Rejected ({results.rejected.length})
+                    </h2>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => downloadAllAsZip('rejected')}
+                      className="px-3 py-1 bg-red-600 text-white rounded-lg hover:bg-red-700 transition flex items-center gap-1"
                     >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <span className="text-white font-semibold">
-                            {cv.name}
-                          </span>
-                          <div className="mt-2 flex items-center gap-3">
-                            <div className="text-xl font-bold text-red-300">
-                              {cv.score}%
-                            </div>
-                            <div className="flex-1 bg-white/20 rounded-full h-2">
-                              <div
-                                className="bg-red-400 h-2 rounded-full transition-all"
-                                style={{ width: `${cv.score}%` }}
-                              />
-                            </div>
-                          </div>
-                          {cv.rejectedBy.length > 0 && (
-                            <div className="mt-2 text-xs text-red-200">
-                              Rejected by: {cv.rejectedBy.join(", ")}
-                            </div>
-                          )}
-                          {cv.matchedCriteria.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              {cv.matchedCriteria.map((mc, i) => (
-                                <span
-                                  key={i}
-                                  className="px-2 py-1 bg-red-800/50 text-red-200 text-xs rounded-full"
-                                >
-                                  {mc.keyword}
-                                </span>
-                              ))}
-                            </div>
-                          )}
+                      <Download className="w-4 h-4" />
+                      ZIP
+                    </button>
+                    <button
+                      onClick={() => exportResults('rejected')}
+                      className="px-3 py-1 bg-red-600 text-white rounded-lg hover:bg-red-700 transition flex items-center gap-1"
+                    >
+                      <File className="w-4 h-4" />
+                      CSV
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {results.rejected.map((candidate, idx) => (
+                    <div key={idx} className="bg-white p-4 rounded-lg shadow">
+                      <div className="flex justify-between items-start mb-2">
+                        <h3 className="font-semibold text-gray-800 flex-1">{candidate.name}</h3>
+                        <span className="bg-red-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                          {candidate.score}
+                        </span>
+                      </div>
+                      {candidate.error && (
+                        <div className="flex items-center gap-1 text-xs text-red-600 mb-2">
+                          <AlertCircle className="w-4 h-4" />
+                          {candidate.error}
                         </div>
+                      )}
+                      {candidate.foundNegatives.length > 0 && (
+                        <div className="text-xs text-gray-600 mt-2 mb-3">
+                          <span className="font-semibold">Issues: </span>
+                          {candidate.foundNegatives.map((k, i) => (
+                            <span key={i} className="bg-red-200 px-2 py-1 rounded mr-1">
+                              {k.keyword} ({k.matches}×)
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-2">
                         <button
-                          onClick={() => deleteCV(cv.id)}
-                          className="text-red-300 hover:text-red-100 ml-2"
+                          onClick={() => viewCV(candidate)}
+                          className="flex-1 px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition flex items-center justify-center gap-1 text-sm"
                         >
-                          <X className="w-5 h-5" />
+                          <Eye className="w-4 h-4" />
+                          View
+                        </button>
+                        <button
+                          onClick={() => downloadCV(candidate.name)}
+                          className="flex-1 px-3 py-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition flex items-center justify-center gap-1 text-sm"
+                        >
+                          <Download className="w-4 h-4" />
+                          Download
                         </button>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
-            )}
+            </div>
+          )}
 
-            {pendingCVs.length > 0 && criteria.length === 0 && (
-              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-                <div className="text-center text-purple-200">
-                  <Search className="w-12 h-12 mx-auto mb-3 text-purple-300" />
-                  <p className="text-lg">
-                    Add matching criteria to start ranking CVs
-                  </p>
+          {/* CV Viewer Modal */}
+          {viewingCandidate && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[95vh] overflow-hidden flex flex-col">
+                <div className="p-6 border-b flex items-center justify-between bg-gradient-to-r from-indigo-50 to-blue-50">
+                  <div>
+                    <h2 className="text-2xl font-bold text-gray-800">{viewingCandidate.name}</h2>
+                    <div className="flex gap-2 mt-2">
+                      <span className="inline-block bg-indigo-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                        Score: {viewingCandidate.score}
+                      </span>
+                      {viewingCandidate.foundKeywords.length > 0 && (
+                        <span className="inline-block bg-green-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                          {viewingCandidate.foundKeywords.length} Matches
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={closeViewer}
+                    className="text-gray-500 hover:text-gray-700 text-3xl font-bold"
+                  >
+                    ×
+                  </button>
+                </div>
+                
+                <div className="p-6 overflow-y-auto flex-1 bg-gray-50">
+                  {viewingCandidate.foundKeywords.length > 0 && (
+                    <div className="mb-4 bg-white p-4 rounded-lg shadow-sm">
+                      <h3 className="font-semibold text-green-800 mb-2 flex items-center gap-2">
+                        <CheckCircle className="w-5 h-5" />
+                        Positive Matches:
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        {viewingCandidate.foundKeywords.map((k, i) => (
+                          <span key={i} className="bg-green-100 text-green-800 px-3 py-1 rounded-lg border border-green-300">
+                            <strong>{k.keyword}</strong> - {k.matches} matches ({k.points} pts)
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {viewingCandidate.foundNegatives.length > 0 && (
+                    <div className="mb-4 bg-white p-4 rounded-lg shadow-sm">
+                      <h3 className="font-semibold text-red-800 mb-2 flex items-center gap-2">
+                        <XCircle className="w-5 h-5" />
+                        Negative Matches:
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        {viewingCandidate.foundNegatives.map((k, i) => (
+                          <span key={i} className="bg-red-100 text-red-800 px-3 py-1 rounded-lg border border-red-300">
+                            <strong>{k.keyword}</strong> - {k.matches} matches
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {pdfUrl ? (
+                    <div className="mb-4 bg-white rounded-lg shadow-lg overflow-hidden">
+                      <div className="bg-gray-800 text-white p-3 flex items-center justify-between">
+                        <h3 className="font-semibold flex items-center gap-2">
+                          <FileText className="w-5 h-5" />
+                          PDF Preview
+                        </h3>
+                        <span className="text-sm text-gray-300">Use scroll to navigate pages</span>
+                      </div>
+                      <iframe
+                        src={pdfUrl}
+                        className="w-full h-[600px] border-0"
+                        title="CV Preview"
+                      />
+                    </div>
+                  ) : (
+                    <div className="mb-4 bg-white p-8 rounded-lg shadow-sm text-center">
+                      <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                      <p className="text-gray-600">PDF preview not available</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-6 border-t flex gap-3 bg-gray-50">
+                  <button
+                    onClick={() => downloadCV(viewingCandidate.name)}
+                    className="flex-1 px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition flex items-center justify-center gap-2 font-semibold"
+                  >
+                    <Download className="w-5 h-5" />
+                    Download Original PDF
+                  </button>
+                  <button
+                    onClick={closeViewer}
+                    className="px-6 py-3 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition font-semibold"
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
-            )}
-
-            {cvs.length === 0 && (
-              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-12 border border-white/20">
-                <div className="text-center text-purple-200">
-                  <Upload className="w-16 h-16 mx-auto mb-4 text-purple-300" />
-                  <p className="text-lg">Upload CVs to get started</p>
-                  <p className="text-sm mt-2">
-                    Define your criteria, then upload candidate resumes
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
-}
+};
+
+export default CVParserApp;

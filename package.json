@@ -13,6 +13,8 @@
     "@tailwindcss/vite": "^4.1.17",
     "jszip": "^3.10.1",
     "lucide-react": "^0.556.0",
+    "mammoth": "^1.11.0",
+    "pdfjs-dist": "^5.4.449",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.1.17",
