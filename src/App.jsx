@@ -28,7 +28,10 @@ import {
   Globe,
   Server,
   Database,
-  Users
+  Users,
+  ExternalLink,
+  Link2,
+  Mail
 } from 'lucide-react';
 import JSZip from 'jszip';
 import {
@@ -37,6 +40,11 @@ import {
   CATEGORY_LABELS
 } from './utils/scoring';
 import { extractTextFromFile, extractFilesFromZip } from './utils/documentParser';
+import {
+  extractLinksFromDocument,
+  linkifyContent,
+  renderLinkIcon
+} from './utils/linkExtractor';
 
 const SKILL_CATEGORIES = [
   {
@@ -384,7 +392,10 @@ const CVParserApp = () => {
       });
 
       try {
-        const text = await extractTextFromFile(file);
+        const docResult = await extractTextFromFile(file);
+        const text = typeof docResult === 'string' ? docResult : docResult.text;
+        const annotations = (docResult && docResult.annotations) || [];
+        const links = extractLinksFromDocument(text, annotations);
         const scoreResult = calculateCandidateScore(text, positiveKeywords, negativeKeywords);
         const displayName = extractCandidateName(file.name, text);
 
@@ -394,6 +405,7 @@ const CVParserApp = () => {
           displayName,
           fileType: file.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'DOCX',
           fullText: text,
+          links,
           ...scoreResult
         });
         successCount++;
@@ -406,6 +418,7 @@ const CVParserApp = () => {
           displayName: extractCandidateName(file.name, ''),
           fileType: file.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'DOCX',
           fullText: '',
+          links: [],
           score: 0,
           scorePercent: 0,
           coveragePercent: 0,
@@ -462,8 +475,12 @@ const CVParserApp = () => {
         (k) => !matchedSet.has(k.keyword.toLowerCase())
       );
 
+      // Ensure candidate has extracted links
+      const candidateLinks = c.links || extractLinksFromDocument(c.fullText, []);
+
       return {
         ...c,
+        links: candidateLinks,
         computedStatus: status,
         isOverridden: Boolean(isManual),
         isStarred: favorites.has(c.name),
@@ -1247,6 +1264,19 @@ const CVParserApp = () => {
                     <Star className={`w-4 h-4 ${selectedCandidate.isStarred ? 'fill-amber-400' : 'text-slate-500'}`} />
                   </button>
 
+                  {/* Open in New Tab Button */}
+                  {pdfUrl && (
+                    <a
+                      href={pdfUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors"
+                      title="Open full PDF in new browser tab"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </a>
+                  )}
+
                   {/* Download Button */}
                   <button
                     onClick={() => downloadSingleCV(selectedCandidate.name)}
@@ -1258,16 +1288,58 @@ const CVParserApp = () => {
                 </div>
               </div>
 
+              {/* Detected CV Links Quick Strip */}
+              {selectedCandidate.links && selectedCandidate.links.length > 0 && (
+                <div className="h-9 px-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-2 overflow-x-auto shrink-0 z-10">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1 shrink-0">
+                      <Link2 className="w-3.5 h-3.5 text-indigo-400" />
+                      Links in CV ({selectedCandidate.links.length}):
+                    </span>
+                    <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
+                      {selectedCandidate.links.map((link) => (
+                        <a
+                          key={link.id}
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs font-semibold bg-slate-950 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border border-slate-800 hover:border-indigo-500/50 transition-colors shrink-0 shadow-xs cursor-pointer"
+                          title={`Open ${link.url} in new tab`}
+                        >
+                          {renderLinkIcon(link.type, 'w-3.5 h-3.5 shrink-0')}
+                          <span>{link.label}</span>
+                          <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+
+                  {selectedCandidate.links.length > 1 && (
+                    <button
+                      onClick={() => {
+                        selectedCandidate.links.forEach((l) => window.open(l.url, '_blank'));
+                      }}
+                      className="hidden sm:flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-indigo-300 bg-slate-950 px-2 py-0.5 rounded-md border border-slate-800 hover:border-slate-700 shrink-0 transition-colors cursor-pointer"
+                      title="Open all detected links in new browser tabs"
+                    >
+                      <span>Open All ({selectedCandidate.links.length})</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* Stage Body: Distraction-Free Document Canvas */}
               <div className="flex-1 overflow-hidden bg-slate-900/60 p-3 flex justify-center">
                 {selectedCandidate.fileType === 'PDF' ? (
                   pdfUrl ? (
                     <div className="w-full h-full max-w-5xl rounded-xl overflow-hidden shadow-2xl bg-white border border-slate-800">
-                      {/* Embed with #toolbar=0&navpanes=0 to hide ugly browser PDF chrome */}
+                      {/* Embed with #toolbar=0&navpanes=0 and allow popups so external links escape smoothly */}
                       <iframe
                         src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`}
                         className="w-full h-full border-0 bg-white"
                         title="CV Resume Preview"
+                        allow="popups; popups-to-escape-sandbox"
                       />
                     </div>
                   ) : (
@@ -1276,15 +1348,18 @@ const CVParserApp = () => {
                     </div>
                   )
                 ) : (
-                  /* Formatted DOCX Reader */
+                  /* Formatted DOCX Reader with auto-linkified URLs & emails */
                   <div className="w-full h-full max-w-3xl overflow-y-auto p-8 bg-white text-slate-900 rounded-xl shadow-2xl">
                     <div className="text-[11px] text-slate-400 font-mono mb-4 pb-2 border-b border-slate-200 flex justify-between">
                       <span>DOCUMENT READER (.DOCX)</span>
                       <span>{selectedCandidate.fullText?.length || 0} characters</span>
                     </div>
-                    <pre className="text-xs leading-relaxed font-sans whitespace-pre-wrap text-slate-800">
-                      {selectedCandidate.fullText || 'No text extracted from this document.'}
-                    </pre>
+                    <div className="text-xs leading-relaxed font-sans whitespace-pre-wrap text-slate-800 selection:bg-indigo-100">
+                      {linkifyContent(
+                        selectedCandidate.fullText,
+                        'text-indigo-600 hover:text-indigo-800 underline font-medium transition-colors cursor-pointer'
+                      ) || 'No text extracted from this document.'}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1436,6 +1511,42 @@ const CVParserApp = () => {
                 </div>
               )}
 
+              {/* Candidate Profiles & Detected Links */}
+              {selectedCandidate.links && selectedCandidate.links.length > 0 && (
+                <div>
+                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Link2 className="w-3.5 h-3.5 text-indigo-400" />
+                      Profiles & Links ({selectedCandidate.links.length})
+                    </span>
+                    <span className="text-[10px] text-indigo-400 font-medium">Opens in new tab</span>
+                  </h4>
+                  <div className="space-y-1.5">
+                    {selectedCandidate.links.map((link) => (
+                      <a
+                        key={link.id}
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-between p-2 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-xs text-slate-300 hover:text-white transition-colors group cursor-pointer"
+                        title={`Open ${link.url} in new tab`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 pr-2">
+                          <span className="text-indigo-400">
+                            {renderLinkIcon(link.type, 'w-3.5 h-3.5 shrink-0')}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="font-semibold text-slate-200 truncate">{link.label}</div>
+                            <div className="text-[10px] text-slate-500 truncate">{link.url}</div>
+                          </div>
+                        </div>
+                        <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 shrink-0 transition-colors" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Contextual Snippets */}
               {selectedCandidate.snippets && selectedCandidate.snippets.length > 0 && (
                 <div>
@@ -1451,7 +1562,7 @@ const CVParserApp = () => {
                         <span className="text-[9px] font-bold text-indigo-400 uppercase font-sans block mb-0.5">
                           {snip.keyword}:
                         </span>
-                        &quot;{snip.snippet}&quot;
+                        &quot;{linkifyContent(snip.snippet)}&quot;
                       </div>
                     ))}
                   </div>

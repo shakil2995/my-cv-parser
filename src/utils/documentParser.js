@@ -58,6 +58,7 @@ export async function extractTextFromPdf(file) {
     pdf = await loadingTask.promise;
 
     let fullText = '';
+    const annotationsList = [];
     // Safety cap: up to 10 pages per resume (covers 99.9% of resumes without memory blowup)
     const maxPages = Math.min(pdf.numPages, 10);
 
@@ -71,6 +72,20 @@ export async function extractTextFromPdf(file) {
         });
         const pageText = textContent.items.map((item) => item.str).join(' ');
         fullText += pageText + '\n';
+
+        // Extract clickable hyperlinks embedded in PDF annotations
+        try {
+          const pageAnnots = await page.getAnnotations();
+          if (Array.isArray(pageAnnots)) {
+            for (const ann of pageAnnots) {
+              if (ann && ann.subtype === 'Link' && ann.url) {
+                annotationsList.push(ann.url);
+              }
+            }
+          }
+        } catch (annErr) {
+          console.warn(`Warning reading annotations on page ${i}:`, annErr);
+        }
       } catch (pageErr) {
         console.warn(`Warning reading page ${i} of ${file.name}:`, pageErr);
       } finally {
@@ -80,7 +95,10 @@ export async function extractTextFromPdf(file) {
       }
     }
 
-    return fullText.trim();
+    return {
+      text: fullText.trim(),
+      annotations: annotationsList
+    };
   } catch (error) {
     console.error('PDF text extraction error:', error);
     throw new Error(`Failed to extract text from PDF: ${file.name} (${error.message})`);
@@ -113,7 +131,10 @@ export async function extractTextFromDocx(file) {
   try {
     arrayBuffer = await file.arrayBuffer();
     const result = await mammoth.extractRawText({ arrayBuffer });
-    return (result.value || '').trim();
+    return {
+      text: (result.value || '').trim(),
+      annotations: []
+    };
   } catch (error) {
     console.error('DOCX text extraction error:', error);
     throw new Error(`Failed to extract text from Word document: ${file.name} (${error.message})`);
