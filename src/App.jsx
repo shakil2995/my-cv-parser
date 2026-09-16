@@ -37,7 +37,8 @@ import {
   Copy,
   Briefcase,
   Wand2,
-  BookOpen
+  BookOpen,
+  Keyboard
 } from 'lucide-react';
 import JSZip from 'jszip';
 import {
@@ -240,8 +241,10 @@ const CVParserApp = () => {
 
   // Setup Modal state
   const [showSetupModal, setShowSetupModal] = useState(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [setupTab, setSetupTab] = useState('jd'); // 'jd' | 'skills' | 'disqualifiers' | 'upload'
   const [presetCategoryTab, setPresetCategoryTab] = useState('all');
+  const searchInputRef = useRef(null);
 
   // JD Extractor state
   const [jdInputText, setJdInputText] = useState('');
@@ -747,16 +750,25 @@ const CVParserApp = () => {
   // Keyboard navigation shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) {
+        if (e.key === 'Escape') {
+          e.target.blur();
+        }
+        return;
+      }
       if (showSetupModal) {
         if (e.key === 'Escape') setShowSetupModal(false);
         return;
       }
+      if (showShortcutsModal) {
+        if (e.key === 'Escape' || e.key === '?') setShowShortcutsModal(false);
+        return;
+      }
 
-      if (e.key === 'j' || e.key === 'ArrowDown') {
+      if (e.key === 'k' || e.key === 'K' || e.key === 'ArrowDown') {
         e.preventDefault();
         selectNextCandidate();
-      } else if (e.key === 'k' || e.key === 'ArrowUp') {
+      } else if (e.key === 'j' || e.key === 'J' || e.key === 'ArrowUp') {
         e.preventDefault();
         selectPreviousCandidate();
       } else if (e.key === 'a' || e.key === 'A') {
@@ -765,12 +777,21 @@ const CVParserApp = () => {
       } else if (e.key === 'r' || e.key === 'R') {
         e.preventDefault();
         setCandidateDecision('rejected');
-      } else if (e.key === 's' || e.key === 'S') {
+      } else if (e.key === 's' || e.key === 'S' || e.key === 'f' || e.key === 'F') {
         e.preventDefault();
         if (selectedCandidate) toggleFavoriteCandidate(selectedCandidate.name);
       } else if (e.key === 'i' || e.key === 'I') {
         e.preventDefault();
         setShowInspector((prev) => !prev);
+      } else if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault();
+        setShowSetupModal(true);
+      } else if (e.key === '/') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      } else if (e.key === '?') {
+        e.preventDefault();
+        setShowShortcutsModal(true);
       }
     };
 
@@ -778,12 +799,28 @@ const CVParserApp = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     showSetupModal,
+    showShortcutsModal,
     selectNextCandidate,
     selectPreviousCandidate,
     setCandidateDecision,
     selectedCandidate,
     toggleFavoriteCandidate
   ]);
+
+  // Warn before reloading, navigating away, or closing tab if active screening data exists
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (candidates.length > 0 || files.length > 0 || processing) {
+        const warningMessage = `You have ${candidates.length} processed candidate(s) and screening decisions in memory. Reloading or leaving will discard your session data unless exported to CSV or ZIP.`;
+        e.preventDefault();
+        e.returnValue = warningMessage;
+        return warningMessage;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [candidates.length, files.length, processing]);
 
   const resetManualOverride = (candidateName) => {
     setManualOverrides((prev) => {
@@ -1092,6 +1129,7 @@ Requirements:
           <button
             onClick={() => setShowSetupModal(true)}
             className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition-colors"
+            title="Open Screening Criteria & Resumes [C]"
           >
             <Settings2 className="w-3.5 h-3.5 text-indigo-400" />
             <span>Criteria & Files</span>
@@ -1100,6 +1138,16 @@ Requirements:
                 {files.length}
               </span>
             )}
+          </button>
+
+          {/* Keyboard Shortcuts Cheat Sheet Button */}
+          <button
+            onClick={() => setShowShortcutsModal(true)}
+            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-semibold flex items-center gap-1 border border-slate-700 transition-colors"
+            title="Keyboard Shortcuts Reference [?]"
+          >
+            <Keyboard className="w-3.5 h-3.5 text-indigo-400" />
+            <kbd className="px-1 py-0.2 text-[9px] bg-white/10 text-white border border-white/20 rounded font-mono">?</kbd>
           </button>
 
           {/* Export Actions */}
@@ -1134,7 +1182,7 @@ Requirements:
                   ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40'
                   : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
               }`}
-              title={`Toggle Skill Inspector (Key: I)`}
+              title="Toggle Skill & Contact Inspector [I]"
             >
               {showInspector ? <PanelRightClose className="w-4 h-4" /> : <PanelRight className="w-4 h-4" />}
             </button>
@@ -1198,19 +1246,24 @@ Requirements:
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
               <input
+                ref={searchInputRef}
                 type="text"
                 placeholder="Filter by name or skill..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-6 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
               />
-              {searchQuery && (
+              {searchQuery ? (
                 <button
                   onClick={() => setSearchQuery('')}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
                 >
                   <X className="w-3 h-3" />
                 </button>
+              ) : (
+                <kbd className="absolute right-2 top-1/2 -translate-y-1/2 px-1 py-0.2 text-[9px] bg-slate-900 border border-slate-800 rounded text-slate-500 font-mono pointer-events-none">
+                  /
+                </kbd>
               )}
             </div>
 
@@ -1427,9 +1480,23 @@ Requirements:
           </div>
 
           {/* Sidebar Footer */}
-          <div className="p-2 border-t border-slate-800 bg-slate-950 text-[10px] text-slate-500 flex items-center justify-between">
+          <div className="p-2 border-t border-slate-800 bg-slate-950 text-[10px] text-slate-400 flex items-center justify-between flex-wrap gap-1">
             <span>{filteredCandidates.length} of {candidates.length} candidates</span>
-            <span className="text-slate-600 font-mono">[J] Next • [K] Prev</span>
+            <div className="flex items-center gap-1.5 text-[9.5px] font-mono text-slate-400">
+              <span className="inline-flex items-center gap-0.5" title="Navigate candidates (J: Prev, K: Next)">
+                <kbd className="px-1 py-0.2 bg-white/10 border border-white/15 rounded text-white text-[9px]">J</kbd> Prev •
+                <kbd className="px-1 py-0.2 bg-white/10 border border-white/15 rounded text-white text-[9px]">K</kbd> Next
+              </span>
+              <span className="inline-flex items-center gap-0.5" title="Shortlist candidate">
+                <kbd className="px-1 py-0.2 bg-white/10 border border-white/15 rounded text-white text-[9px]">A</kbd> Pass
+              </span>
+              <span className="inline-flex items-center gap-0.5" title="Reject candidate">
+                <kbd className="px-1 py-0.2 bg-white/10 border border-white/15 rounded text-white text-[9px]">R</kbd> Fail
+              </span>
+              <span className="inline-flex items-center gap-0.5" title="Star candidate">
+                <kbd className="px-1 py-0.2 bg-white/10 border border-white/15 rounded text-white text-[9px]">S</kbd> Star
+              </span>
+            </div>
           </div>
         </aside>
 
@@ -1456,10 +1523,11 @@ Requirements:
                   <button
                     onClick={selectPreviousCandidate}
                     disabled={currentIndex <= 0}
-                    className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-25 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                    title="Previous Candidate [K]"
+                    className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-25 disabled:cursor-not-allowed transition-colors cursor-pointer flex items-center gap-1"
+                    title="Previous Candidate [J or ↑]"
                   >
                     <ChevronLeft className="w-4 h-4" />
+                    <kbd className="hidden sm:inline-block px-1 py-0.2 text-[9px] bg-white/10 border border-white/15 rounded text-white font-mono">J</kbd>
                   </button>
                   <span className="text-xs font-mono font-bold text-slate-300 px-2 min-w-[70px] text-center select-none">
                     {currentIndex + 1} / {filteredCandidates.length}
@@ -1467,9 +1535,10 @@ Requirements:
                   <button
                     onClick={selectNextCandidate}
                     disabled={currentIndex >= filteredCandidates.length - 1}
-                    className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-25 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                    title="Next Candidate [J]"
+                    className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-25 disabled:cursor-not-allowed transition-colors cursor-pointer flex items-center gap-1"
+                    title="Next Candidate [K or ↓]"
                   >
+                    <kbd className="hidden sm:inline-block px-1 py-0.2 text-[9px] bg-white/10 border border-white/15 rounded text-white font-mono">K</kbd>
                     <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
@@ -1484,10 +1553,11 @@ Requirements:
                         ? 'bg-emerald-600 text-white ring-2 ring-emerald-400/40'
                         : 'bg-slate-800 hover:bg-emerald-950 text-slate-300 hover:text-emerald-300 border border-slate-700'
                     }`}
-                    title="Shortlist Candidate [S]"
+                    title="Shortlist Candidate [A]"
                   >
-                    <CheckCircle className="w-4 h-4" />
+                    <Check className="w-4 h-4" />
                     <span>Shortlist</span>
+                    <kbd className="px-1.5 py-0.2 text-[9px] font-mono rounded bg-white/15 border border-white/20 text-white shadow-2xs">A</kbd>
                   </button>
 
                   {/* Reject Button */}
@@ -1500,21 +1570,23 @@ Requirements:
                     }`}
                     title="Reject Candidate [R]"
                   >
-                    <XCircle className="w-4 h-4" />
+                    <X className="w-4 h-4" />
                     <span>Reject</span>
+                    <kbd className="px-1.5 py-0.2 text-[9px] font-mono rounded bg-white/15 border border-white/20 text-white shadow-2xs">R</kbd>
                   </button>
 
                   {/* Star/Favorite Toggle */}
                   <button
                     onClick={() => toggleFavoriteCandidate(selectedCandidate.name)}
-                    className={`p-1.5 rounded-lg border transition-all ${
+                    className={`px-2 py-1.5 rounded-lg border transition-all flex items-center gap-1 ${
                       selectedCandidate.isStarred
                         ? 'bg-amber-950/80 border-amber-600/50 text-amber-400'
                         : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-amber-400'
                     }`}
-                    title="Star Candidate [F]"
+                    title="Star / Favorite Candidate [S]"
                   >
                     <Star className={`w-4 h-4 ${selectedCandidate.isStarred ? 'fill-amber-400' : ''}`} />
+                    <kbd className="px-1 py-0.2 text-[9px] font-mono rounded bg-white/15 border border-white/20 text-white shadow-2xs">S</kbd>
                   </button>
 
                   {/* Open in New Tab Button */}
@@ -1542,7 +1614,7 @@ Requirements:
                   {/* Inspector Panel Toggle */}
                   <button
                     onClick={() => setShowInspector(!showInspector)}
-                    className={`p-1.5 rounded-lg border transition-all ${
+                    className={`p-1.5 rounded-lg border transition-all text-xs ${
                       showInspector
                         ? 'bg-indigo-600 text-white border-indigo-500'
                         : 'bg-slate-800 text-slate-400 hover:text-white border-slate-700'
@@ -1967,9 +2039,11 @@ Requirements:
 
               <button
                 onClick={() => setShowSetupModal(false)}
-                className="p-1 text-slate-400 hover:text-white rounded-lg transition-colors"
+                className="px-2 py-1 text-slate-400 hover:text-white rounded-lg transition-colors flex items-center gap-1.5 hover:bg-slate-800"
+                title="Close (Esc)"
               >
-                <X className="w-5 h-5" />
+                <kbd className="px-1.5 py-0.5 text-[9px] font-mono bg-white/10 text-white border border-white/20 rounded">ESC</kbd>
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -2623,6 +2697,122 @@ Requirements:
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. KEYBOARD SHORTCUTS REFERENCE MODAL */}
+      {showShortcutsModal && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-indigo-500/20 text-indigo-400 rounded-lg border border-indigo-500/30">
+                  <Keyboard className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Keyboard Shortcuts</h3>
+                  <p className="text-[11px] text-slate-400">Power navigation & triage hotkeys</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowShortcutsModal(false)}
+                className="px-2 py-1 text-slate-400 hover:text-white rounded-lg transition-colors flex items-center gap-1 hover:bg-slate-800"
+                title="Close (Esc)"
+              >
+                <kbd className="px-1.5 py-0.5 text-[9px] font-mono bg-white/10 text-white border border-white/20 rounded">ESC</kbd>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 space-y-3.5 max-h-[70vh] overflow-y-auto text-xs">
+              {/* Category: Triage & Decisions */}
+              <div>
+                <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 mb-1.5">
+                  Triage & Screening
+                </h4>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <span className="text-slate-300 font-medium">Shortlist Candidate</span>
+                    <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">A</kbd>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <span className="text-slate-300 font-medium">Reject Candidate</span>
+                    <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">R</kbd>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <span className="text-slate-300 font-medium">Star / Bookmark</span>
+                    <div className="flex items-center gap-1">
+                      <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">S</kbd>
+                      <span className="text-slate-500">or</span>
+                      <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">F</kbd>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Category: Navigation */}
+              <div>
+                <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 mb-1.5">
+                  Navigation
+                </h4>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <span className="text-slate-300 font-medium">Next Candidate</span>
+                    <div className="flex items-center gap-1">
+                      <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">K</kbd>
+                      <span className="text-slate-500">or</span>
+                      <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">↓</kbd>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <span className="text-slate-300 font-medium">Previous Candidate</span>
+                    <div className="flex items-center gap-1">
+                      <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">J</kbd>
+                      <span className="text-slate-500">or</span>
+                      <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">↑</kbd>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Category: General Actions */}
+              <div>
+                <h4 className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 mb-1.5">
+                  Panels & Filters
+                </h4>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <span className="text-slate-300 font-medium">Toggle Inspector Panel</span>
+                    <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">I</kbd>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <span className="text-slate-300 font-medium">Open Criteria & Files Setup</span>
+                    <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">C</kbd>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <span className="text-slate-300 font-medium">Focus Search Input</span>
+                    <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">/</kbd>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <span className="text-slate-300 font-medium">Close Modal / Unfocus</span>
+                    <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">ESC</kbd>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 border-t border-slate-800 bg-slate-950 flex items-center justify-end">
+              <button
+                onClick={() => setShowShortcutsModal(false)}
+                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer"
+              >
+                Got it
+              </button>
             </div>
           </div>
         </div>
