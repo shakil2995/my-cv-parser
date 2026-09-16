@@ -31,7 +31,13 @@ import {
   Users,
   ExternalLink,
   Link2,
-  Mail
+  Mail,
+  Phone,
+  MessageSquare,
+  Copy,
+  Briefcase,
+  Wand2,
+  BookOpen
 } from 'lucide-react';
 import JSZip from 'jszip';
 import {
@@ -45,6 +51,9 @@ import {
   linkifyContent,
   renderLinkIcon
 } from './utils/linkExtractor';
+import { extractContactDetails } from './utils/contactExtractor';
+import { extractSkillsFromJD, SKILL_KNOWLEDGE_BASE } from './utils/jdExtractor';
+import { detectExperienceLevel } from './utils/experienceDetector';
 
 const SKILL_CATEGORIES = [
   {
@@ -146,6 +155,83 @@ const DISQUALIFIER_PRESETS = [
   'unpaid'
 ];
 
+function getCandidateInitials(name) {
+  if (!name) return 'CV';
+  // Strip common noisy file suffixes like CV, Resume, Mobile, Developer, etc.
+  let clean = name
+    .replace(/\.(pdf|docx|doc|zip)$/i, '')
+    .replace(/\b(cv|resume|curriculum|vitae|developer|engineer|flutter|mobile|senior|junior|lead|frontend|backend|fullstack|profile|doc)\b/gi, '')
+    .replace(/[_\-\.]+/g, ' ')
+    .trim();
+
+  let parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    parts = name.replace(/\.(pdf|docx|doc)$/i, '').replace(/[_\-\.]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  }
+
+  if (parts.length >= 2) {
+    // If first part is "Md" or "Mohammad" and we have 3 parts, take Md + 2nd name part
+    if (/^(md|mohammad|muhammad|mst)$/i.test(parts[0]) && parts.length >= 3) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  if (parts.length === 1 && parts[0].length >= 2) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return 'CV';
+}
+
+function getScoreBadgeStyle(isAccepted = false, isOverridden = false) {
+  if (isOverridden) {
+    return 'bg-purple-950/90 text-purple-300 border-purple-800/60 shadow-purple-950/50';
+  }
+  if (isAccepted) {
+    return 'bg-emerald-950/90 text-emerald-300 border-emerald-700/60 shadow-emerald-950/50';
+  }
+  return 'bg-rose-950/80 text-rose-300 border-rose-800/60 shadow-rose-950/50';
+}
+
+function getCoverageColor(coveragePercent) {
+  if (coveragePercent >= 70) {
+    return 'text-emerald-400';
+  }
+  if (coveragePercent >= 40) {
+    return 'text-amber-400';
+  }
+  return 'text-rose-400';
+}
+
+function getCoverageBadgeStyle(coveragePercent) {
+  if (coveragePercent >= 70) {
+    return 'bg-emerald-950/80 text-emerald-300 border-emerald-800/50';
+  }
+  if (coveragePercent >= 40) {
+    return 'bg-amber-950/80 text-amber-300 border-amber-800/50';
+  }
+  return 'bg-rose-950/80 text-rose-300 border-rose-800/50';
+}
+
+function getCoverageCardStyle(coveragePercent) {
+  if (coveragePercent >= 70) {
+    return 'bg-emerald-950/30 border-emerald-800/50 text-emerald-300';
+  }
+  if (coveragePercent >= 40) {
+    return 'bg-amber-950/30 border-amber-800/50 text-amber-300';
+  }
+  return 'bg-rose-950/30 border-rose-800/50 text-rose-300';
+}
+
+function getCoverageBarColor(coveragePercent) {
+  if (coveragePercent >= 70) {
+    return 'bg-emerald-400';
+  }
+  if (coveragePercent >= 40) {
+    return 'bg-amber-400';
+  }
+  return 'bg-rose-500';
+}
+
 const CVParserApp = () => {
   // Files state
   const [files, setFiles] = useState([]);
@@ -154,8 +240,14 @@ const CVParserApp = () => {
 
   // Setup Modal state
   const [showSetupModal, setShowSetupModal] = useState(false);
-  const [setupTab, setSetupTab] = useState('skills'); // 'skills' | 'disqualifiers' | 'upload'
+  const [setupTab, setSetupTab] = useState('jd'); // 'jd' | 'skills' | 'disqualifiers' | 'upload'
   const [presetCategoryTab, setPresetCategoryTab] = useState('all');
+
+  // JD Extractor state
+  const [jdInputText, setJdInputText] = useState('');
+  const [extractedJdResult, setExtractedJdResult] = useState(null);
+  const [isExtractingJd, setIsExtractingJd] = useState(false);
+  const [copiedToast, setCopiedToast] = useState(null);
 
   // Inspector panel toggle
   const [showInspector, setShowInspector] = useState(true);
@@ -396,6 +488,8 @@ const CVParserApp = () => {
         const text = typeof docResult === 'string' ? docResult : docResult.text;
         const annotations = (docResult && docResult.annotations) || [];
         const links = extractLinksFromDocument(text, annotations);
+        const contact = extractContactDetails(text, annotations);
+        const experience = detectExperienceLevel(text);
         const scoreResult = calculateCandidateScore(text, positiveKeywords, negativeKeywords);
         const displayName = extractCandidateName(file.name, text);
 
@@ -406,6 +500,8 @@ const CVParserApp = () => {
           fileType: file.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'DOCX',
           fullText: text,
           links,
+          contact,
+          experience,
           ...scoreResult
         });
         successCount++;
@@ -419,6 +515,8 @@ const CVParserApp = () => {
           fileType: file.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'DOCX',
           fullText: '',
           links: [],
+          contact: { emails: [], primaryEmail: null, phones: [], primaryPhone: null },
+          experience: { level: 'Not Specified', badgeLabel: 'Exp: N/A', years: null, yearsDisplay: 'N/A', confidence: 'low', sourceSnippet: null, color: 'slate' },
           score: 0,
           scorePercent: 0,
           coveragePercent: 0,
@@ -453,33 +551,40 @@ const CVParserApp = () => {
     }
   };
 
-  // Enriched candidates list with live computed status and overrides
+  // Enriched candidates list with live computed status, real-time dynamic scoring, contact, and experience
   const enrichedCandidates = useMemo(() => {
     return candidates.map((c) => {
+      // Real-time live score calculation if keywords change after parsing
+      const scoreResult = c.fullText ? calculateCandidateScore(c.fullText, positiveKeywords, negativeKeywords) : c;
       const isManual = manualOverrides[c.name];
       let status = 'rejected';
 
       if (isManual) {
         status = isManual;
-      } else if (c.hasDisqualifier) {
+      } else if (scoreResult.hasDisqualifier) {
         status = 'rejected';
-      } else if (c.scorePercent >= passingThreshold) {
+      } else if (scoreResult.scorePercent >= passingThreshold) {
         status = 'accepted';
       } else {
         status = 'rejected';
       }
 
       // Compute missing required skills
-      const matchedSet = new Set(c.foundKeywords.map((k) => k.keyword.toLowerCase()));
+      const matchedSet = new Set((scoreResult.foundKeywords || []).map((k) => k.keyword.toLowerCase()));
       const missingSkills = positiveKeywords.filter(
         (k) => !matchedSet.has(k.keyword.toLowerCase())
       );
 
-      // Ensure candidate has extracted links
+      // Ensure candidate has extracted links, contact, and experience
       const candidateLinks = c.links || extractLinksFromDocument(c.fullText, []);
+      const candidateContact = c.contact || extractContactDetails(c.fullText, []);
+      const candidateExperience = c.experience || detectExperienceLevel(c.fullText);
 
       return {
         ...c,
+        ...scoreResult,
+        contact: candidateContact,
+        experience: candidateExperience,
         links: candidateLinks,
         computedStatus: status,
         isOverridden: Boolean(isManual),
@@ -487,7 +592,7 @@ const CVParserApp = () => {
         missingSkills
       };
     });
-  }, [candidates, manualOverrides, passingThreshold, favorites, positiveKeywords]);
+  }, [candidates, manualOverrides, passingThreshold, favorites, positiveKeywords, negativeKeywords]);
 
   // Filter and Sort Candidate List for Sidebar
   const { filteredCandidates, poolCounts, allSkills } = useMemo(() => {
@@ -688,6 +793,130 @@ const CVParserApp = () => {
     });
   };
 
+  // Copy to clipboard with toast notification
+  const copyToClipboard = (text, label = 'Copied') => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedToast(`${label} copied!`);
+    setTimeout(() => setCopiedToast(null), 2200);
+  };
+
+  // Sample JDs for quick testing
+  const SAMPLE_JDS = [
+    {
+      title: 'Senior Flutter Developer (Dhaka/BD)',
+      text: `Position: Senior Flutter Developer
+Location: Dhaka, Bangladesh / Hybrid
+Experience: 4+ Years
+
+Key Requirements (Must-Have):
+- 4+ years of professional mobile app development experience.
+- Strong proficiency with Flutter and Dart.
+- State Management: BLoC, Provider, or Riverpod.
+- Solid understanding of REST APIs, GraphQL, and Firebase integration.
+- Native Android (Kotlin) or iOS (Swift) bridging knowledge.
+- Experience with Clean Architecture and Unit Testing.
+- Strong Problem Solving and Team Leadership skills.
+
+Bonus Points / Nice-to-Have:
+- CI/CD with GitHub Actions.
+- Knowledge of Docker & WebSockets.
+- Published applications on Google Play Store and Apple App Store.`,
+    },
+    {
+      title: 'Full-Stack React & Node.js Developer',
+      text: `Job Title: Full-Stack Engineer
+Location: Remote / Dhaka
+
+Requirements:
+- 3+ years experience with React, Next.js, and TypeScript.
+- Backend API development in Node.js, Express, or NestJS.
+- Database design with PostgreSQL, MongoDB, and Redis caching.
+- Docker, CI/CD, and AWS deployment.
+- Agile / Scrum and Code Review.
+
+Nice to Have:
+- Tailwind CSS, GraphQL, Jest, Python.`,
+    },
+    {
+      title: 'Backend Python & Cloud Engineer',
+      text: `Role: Senior Backend Engineer
+Requirements:
+- 5+ years building backend services with Python, FastAPI, and Django.
+- Microservices, PostgreSQL, Redis, and gRPC.
+- Docker, Kubernetes, Linux, and GCP / AWS cloud.
+- REST API security, Unit Testing, and CI/CD.
+- Excellent Communication and Problem Solving.`,
+    },
+  ];
+
+  // JD Auto-Skill Extractor Handlers
+  const handleExtractFromJd = (text = jdInputText) => {
+    if (!text || !text.trim()) return;
+    setIsExtractingJd(true);
+    setTimeout(() => {
+      const res = extractSkillsFromJD(text);
+      setExtractedJdResult(res);
+      setIsExtractingJd(false);
+    }, 60);
+  };
+
+  const handleApplyJdCriteria = () => {
+    if (!extractedJdResult || !extractedJdResult.skills) return;
+
+    const selectedSkills = extractedJdResult.skills
+      .filter((s) => s.selected)
+      .map((s) => ({
+        id: `pos-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+        keyword: s.keyword,
+        weight: s.weight,
+        category: s.category,
+      }));
+
+    setPositiveKeywords(selectedSkills);
+
+    if (extractedJdResult.suggestedDisqualifiers && extractedJdResult.suggestedDisqualifiers.length > 0) {
+      const selectedDis = extractedJdResult.suggestedDisqualifiers
+        .filter((d) => d.selected)
+        .map((d) => ({
+          id: `neg-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+          keyword: d.keyword,
+          type: 'disqualifier',
+          penalty: 10,
+        }));
+      if (selectedDis.length > 0) {
+        setNegativeKeywords(selectedDis);
+      }
+    }
+
+    setSetupTab('skills');
+  };
+
+  const toggleJdSkillSelection = (index) => {
+    setExtractedJdResult((prev) => {
+      if (!prev) return prev;
+      const updatedSkills = [...prev.skills];
+      updatedSkills[index] = {
+        ...updatedSkills[index],
+        selected: !updatedSkills[index].selected,
+      };
+      return { ...prev, skills: updatedSkills };
+    });
+  };
+
+  const updateJdSkillWeight = (index, delta) => {
+    setExtractedJdResult((prev) => {
+      if (!prev) return prev;
+      const updatedSkills = [...prev.skills];
+      const newWeight = Math.max(1, Math.min(10, updatedSkills[index].weight + delta));
+      updatedSkills[index] = {
+        ...updatedSkills[index],
+        weight: newWeight,
+      };
+      return { ...prev, skills: updatedSkills };
+    });
+  };
+
   // Download single CV
   const downloadSingleCV = (fileName) => {
     const file = fileMap.get(fileName);
@@ -712,6 +941,11 @@ const CVParserApp = () => {
       'Original File',
       'Format',
       'Overall Match Score (%)',
+      'Experience Level',
+      'Estimated Years',
+      'Email',
+      'Phone (BD/Intl)',
+      'Mobile Operator',
       'Skill Coverage (%)',
       'Skills Matched Count',
       'Matched Skills',
@@ -726,6 +960,11 @@ const CVParserApp = () => {
       `"${c.name.replace(/"/g, '""')}"`,
       c.fileType,
       c.scorePercent,
+      `"${c.experience?.confidence !== 'low' ? (c.experience?.level || 'N/A') : 'N/A'}"`,
+      `"${c.experience?.confidence !== 'low' ? (c.experience?.yearsDisplay || 'N/A') : 'N/A'}"`,
+      `"${c.contact?.primaryEmail || ''}"`,
+      `"${c.contact?.primaryPhone?.display || ''}"`,
+      `"${c.contact?.primaryPhone?.operator || ''}"`,
       `${c.coveragePercent}%`,
       `${c.matchedCount}/${c.totalPositive}`,
       `"${c.foundKeywords.map((k) => `${k.keyword} (${k.matches}x)`).join(', ')}"`,
@@ -1041,7 +1280,7 @@ const CVParserApp = () => {
           </div>
 
           {/* Candidate Feed List */}
-          <div className="flex-1 overflow-y-auto divide-y divide-slate-800/60">
+          <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
             {filteredCandidates.length === 0 ? (
               <div className="p-8 text-center text-slate-500 text-xs">
                 {candidates.length === 0 ? (
@@ -1049,7 +1288,7 @@ const CVParserApp = () => {
                     <p className="font-medium text-slate-400">No CVs processed yet.</p>
                     <button
                       onClick={() => setShowSetupModal(true)}
-                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition-colors"
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition-colors shadow-md shadow-indigo-950/50"
                     >
                       Upload Resumes
                     </button>
@@ -1062,93 +1301,125 @@ const CVParserApp = () => {
               filteredCandidates.map((c) => {
                 const isSelected = selectedCandidate?.id === c.id;
                 const isAccepted = c.computedStatus === 'accepted';
+                const initials = getCandidateInitials(c.displayName);
 
                 return (
                   <div
                     key={c.id}
                     onClick={() => setSelectedCandidateId(c.id)}
-                    className={`p-3 cursor-pointer transition-all border-l-[3px] ${
+                    className={`relative rounded-xl p-3 cursor-pointer transition-all duration-150 border ${
                       isSelected
-                        ? 'bg-slate-800/90 border-indigo-500 shadow-sm'
-                        : 'border-transparent hover:bg-slate-800/40'
+                        ? 'bg-slate-800 border-indigo-500/90 ring-1 ring-indigo-500/30 shadow-md'
+                        : 'bg-slate-800/70 hover:bg-slate-800 border-slate-700/60 hover:border-slate-600/80 shadow-xs'
                     }`}
                   >
-                    {/* Top row: Name & Score */}
-                    <div className="flex items-start justify-between gap-1 mb-1">
-                      <div className="flex-1 min-w-0 pr-1">
-                        <div className="flex items-center gap-1.5">
-                          <h3
-                            className={`text-xs font-bold truncate ${
-                              isSelected ? 'text-white' : 'text-slate-200'
-                            }`}
-                            title={c.displayName}
-                          >
-                            {c.displayName}
-                          </h3>
-                          <span className="text-[9px] uppercase font-bold px-1 rounded bg-slate-800 text-slate-400">
-                            {c.fileType}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-500 truncate" title={c.name}>
+                    {/* Row 1: Candidate Name & Original Filename + Top-Right Actions */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <h3
+                          className={`text-xs font-bold truncate transition-colors ${
+                            isSelected ? 'text-white' : 'text-slate-200 hover:text-white'
+                          }`}
+                          title={c.displayName}
+                        >
+                          {c.displayName}
+                        </h3>
+                        <p className="text-[10px] text-slate-400 truncate mt-0.5" title={c.name}>
                           {c.name}
                         </p>
                       </div>
 
-                      {/* Score Pill */}
-                      <span
-                        className={`text-[11px] font-black px-2 py-0.5 rounded-md shrink-0 font-mono ${
-                          c.isOverridden
-                            ? 'bg-purple-950 text-purple-300 border border-purple-800/50'
-                            : isAccepted
-                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/50'
-                            : 'bg-rose-950 text-rose-400 border border-rose-800/50'
-                        }`}
-                      >
-                        {c.scorePercent}%
-                      </span>
+                      <div className="shrink-0 flex items-center gap-1.5 self-start">
+                        {/* Star Favorite Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFavoriteCandidate(c.name);
+                          }}
+                          className="p-0.5 text-slate-400 hover:text-amber-400 transition-colors"
+                          title="Toggle Favorite"
+                        >
+                          <Star
+                            className={`w-3.5 h-3.5 transition-transform active:scale-125 ${
+                              c.isStarred ? 'fill-amber-400 text-amber-400' : 'hover:text-amber-300'
+                            }`}
+                          />
+                        </button>
+
+                        {/* Match Score Pill */}
+                        <span
+                          className={`text-[11px] font-black px-2 py-0.5 rounded-lg font-mono tracking-tight shadow-xs border ${getScoreBadgeStyle(
+                            isAccepted,
+                            c.isOverridden
+                          )}`}
+                        >
+                          {c.scorePercent}%
+                        </span>
+                      </div>
                     </div>
 
-                    {/* Skill coverage & Disqualifier */}
-                    <div className="flex items-center justify-between gap-2 mt-1 text-[11px]">
-                      <span className="text-slate-400">
-                        {c.matchedCount}/{c.totalPositive} skills ({c.coveragePercent}%)
+                    {/* Row 2: Metadata Badges (File Type, Experience, Skill Match Count) */}
+                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap text-[10px]">
+                      <span className="text-[9px] uppercase font-bold px-1.5 py-0.2 rounded bg-slate-700/60 text-slate-300 font-mono">
+                        {c.fileType}
                       </span>
 
-                      {/* Star Button */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleFavoriteCandidate(c.name);
-                        }}
-                        className="p-0.5 text-amber-400 hover:text-amber-300"
-                        title="Toggle Favorite"
+                      {/* Experience badge - only show for medium or high confidence */}
+                      {c.experience && c.experience.level !== 'Not Specified' && c.experience.confidence !== 'low' && (
+                        <span
+                          className={`text-[9px] font-semibold px-1.5 py-0.2 rounded font-mono border inline-flex items-center gap-1 ${
+                            c.experience.color === 'purple'
+                              ? 'bg-purple-950/80 text-purple-300 border-purple-800/40'
+                              : c.experience.color === 'emerald'
+                              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800/40'
+                              : c.experience.color === 'amber'
+                              ? 'bg-amber-950/80 text-amber-300 border-amber-800/40'
+                              : 'bg-indigo-950/80 text-indigo-300 border-indigo-800/40'
+                          }`}
+                        >
+                          <span className="w-1 h-1 rounded-full bg-current opacity-70" />
+                          {c.experience.badgeLabel}
+                        </span>
+                      )}
+
+                      <span
+                        className={`text-[9px] font-semibold px-1.5 py-0.2 rounded font-mono border inline-flex items-center gap-1 ${getCoverageBadgeStyle(
+                          c.coveragePercent
+                        )}`}
+                        title={`${c.coveragePercent}% Skill Coverage (${c.matchedCount} of ${c.totalPositive} skills)`}
                       >
-                        <Star className={`w-3.5 h-3.5 ${c.isStarred ? 'fill-amber-400' : 'text-slate-600'}`} />
-                      </button>
+                        <span className="w-1 h-1 rounded-full bg-current opacity-70" />
+                        {c.matchedCount}/{c.totalPositive} skills ({c.coveragePercent}%)
+                      </span>
                     </div>
 
                     {/* Dealbreaker Alert Badge */}
                     {c.hasDisqualifier && (
-                      <div className="mt-1.5 text-[10px] text-rose-400 font-bold bg-rose-950/60 border border-rose-800/40 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <ShieldAlert className="w-3 h-3 shrink-0" />
+                      <div className="mt-2 text-[10px] text-rose-300 font-medium bg-rose-950/60 border border-rose-800/50 px-2 py-1 rounded-lg flex items-center gap-1.5 shadow-xs">
+                        <ShieldAlert className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                         <span className="truncate">Disqualified: {c.disqualifiers.map((d) => d.keyword).join(', ')}</span>
                       </div>
                     )}
 
-                    {/* Matched Skill Tags preview */}
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {c.foundKeywords.slice(0, 3).map((k, idx) => (
-                        <span
-                          key={idx}
-                          className="text-[10px] bg-slate-950 text-slate-400 px-1.5 py-0.2 rounded border border-slate-800 font-medium truncate max-w-[80px]"
-                        >
-                          {k.keyword}
-                        </span>
-                      ))}
-                      {c.foundKeywords.length > 3 && (
-                        <span className="text-[10px] text-slate-600">+{c.foundKeywords.length - 3}</span>
-                      )}
-                    </div>
+                    {/* Row 3: Matched Skill Tags (Single Row) */}
+                    {c.foundKeywords.length > 0 && (
+                      <div className="flex items-center gap-1 mt-2 overflow-hidden flex-nowrap">
+                        {c.foundKeywords.slice(0, 3).map((k, idx) => (
+                          <span
+                            key={idx}
+                            className="text-[9.5px] bg-slate-900/90 text-slate-300 px-2 py-0.5 rounded-md border border-slate-700/70 font-medium truncate shrink-0 max-w-[85px]"
+                            title={k.keyword}
+                          >
+                            {k.keyword}
+                          </span>
+                        ))}
+                        {c.foundKeywords.length > 3 && (
+                          <span className="text-[9.5px] bg-slate-900/60 text-slate-400 px-1.5 py-0.5 rounded-md border border-slate-700/50 font-mono shrink-0">
+                            +{c.foundKeywords.length - 3}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })
@@ -1168,35 +1439,15 @@ const CVParserApp = () => {
             <>
               {/* Stage Header: Candidate Name & Triage Action Bar */}
               <div className="relative h-[52px] px-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between shrink-0 z-10">
-                {/* Candidate title & badges */}
-                <div className="flex items-center gap-3 min-w-0 pr-2 max-w-[calc(50%-90px)]">
+                {/* Candidate title & Filename */}
+                <div className="flex items-center gap-2.5 min-w-0 pr-2 max-w-[calc(50%-90px)]">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-sm md:text-base font-extrabold text-white truncate" title={selectedCandidate.displayName}>
-                        {selectedCandidate.displayName}
-                      </h2>
-                      <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
-                        {selectedCandidate.fileType}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 truncate" title={selectedCandidate.name}>
+                    <h2 className="text-sm md:text-base font-extrabold text-white truncate" title={selectedCandidate.displayName}>
+                      {selectedCandidate.displayName}
+                    </h2>
+                    <p className="text-[10px] text-slate-400 truncate mt-0.5" title={selectedCandidate.name}>
                       {selectedCandidate.name}
                     </p>
-                  </div>
-
-                  <div className="hidden 2xl:flex items-center gap-2 shrink-0">
-                    <span
-                      className={`text-xs font-black px-2.5 py-0.5 rounded-full font-mono ${
-                        selectedCandidate.computedStatus === 'accepted'
-                          ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/60'
-                          : 'bg-rose-950 text-rose-400 border border-rose-800/60'
-                      }`}
-                    >
-                      {selectedCandidate.scorePercent}% Match
-                    </span>
-                    <span className="text-xs text-slate-400">
-                      {selectedCandidate.matchedCount}/{selectedCandidate.totalPositive} skills ({selectedCandidate.coveragePercent}%)
-                    </span>
                   </div>
                 </div>
 
@@ -1233,11 +1484,10 @@ const CVParserApp = () => {
                         ? 'bg-emerald-600 text-white ring-2 ring-emerald-400/40'
                         : 'bg-slate-800 hover:bg-emerald-950 text-slate-300 hover:text-emerald-300 border border-slate-700'
                     }`}
-                    title="Shortlist Candidate [A]"
+                    title="Shortlist Candidate [S]"
                   >
-                    <Check className="w-3.5 h-3.5" />
+                    <CheckCircle className="w-4 h-4" />
                     <span>Shortlist</span>
-                    <kbd className="hidden lg:inline-block text-[9px] bg-black/30 px-1 rounded font-mono">A</kbd>
                   </button>
 
                   {/* Reject Button */}
@@ -1250,18 +1500,21 @@ const CVParserApp = () => {
                     }`}
                     title="Reject Candidate [R]"
                   >
-                    <X className="w-3.5 h-3.5" />
+                    <XCircle className="w-4 h-4" />
                     <span>Reject</span>
-                    <kbd className="hidden lg:inline-block text-[9px] bg-black/30 px-1 rounded font-mono">R</kbd>
                   </button>
 
-                  {/* Star Button */}
+                  {/* Star/Favorite Toggle */}
                   <button
                     onClick={() => toggleFavoriteCandidate(selectedCandidate.name)}
-                    className="p-1.5 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded-lg border border-slate-700 transition-colors"
-                    title="Toggle Star [S]"
+                    className={`p-1.5 rounded-lg border transition-all ${
+                      selectedCandidate.isStarred
+                        ? 'bg-amber-950/80 border-amber-600/50 text-amber-400'
+                        : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-amber-400'
+                    }`}
+                    title="Star Candidate [F]"
                   >
-                    <Star className={`w-4 h-4 ${selectedCandidate.isStarred ? 'fill-amber-400' : 'text-slate-500'}`} />
+                    <Star className={`w-4 h-4 ${selectedCandidate.isStarred ? 'fill-amber-400' : ''}`} />
                   </button>
 
                   {/* Open in New Tab Button */}
@@ -1285,49 +1538,21 @@ const CVParserApp = () => {
                   >
                     <Download className="w-4 h-4" />
                   </button>
+
+                  {/* Inspector Panel Toggle */}
+                  <button
+                    onClick={() => setShowInspector(!showInspector)}
+                    className={`p-1.5 rounded-lg border transition-all ${
+                      showInspector
+                        ? 'bg-indigo-600 text-white border-indigo-500'
+                        : 'bg-slate-800 text-slate-400 hover:text-white border-slate-700'
+                    }`}
+                    title={showInspector ? 'Hide Inspector [I]' : 'Show Inspector [I]'}
+                  >
+                    {showInspector ? <PanelRightClose className="w-4 h-4" /> : <PanelRight className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
-
-              {/* Detected CV Links Quick Strip */}
-              {selectedCandidate.links && selectedCandidate.links.length > 0 && (
-                <div className="h-9 px-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-2 overflow-x-auto shrink-0 z-10">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1 shrink-0">
-                      <Link2 className="w-3.5 h-3.5 text-indigo-400" />
-                      Links in CV ({selectedCandidate.links.length}):
-                    </span>
-                    <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
-                      {selectedCandidate.links.map((link) => (
-                        <a
-                          key={link.id}
-                          href={link.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs font-semibold bg-slate-950 hover:bg-indigo-600/30 text-indigo-300 hover:text-white border border-slate-800 hover:border-indigo-500/50 transition-colors shrink-0 shadow-xs cursor-pointer"
-                          title={`Open ${link.url} in new tab`}
-                        >
-                          {renderLinkIcon(link.type, 'w-3.5 h-3.5 shrink-0')}
-                          <span>{link.label}</span>
-                          <ExternalLink className="w-2.5 h-2.5 opacity-60" />
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-
-                  {selectedCandidate.links.length > 1 && (
-                    <button
-                      onClick={() => {
-                        selectedCandidate.links.forEach((l) => window.open(l.url, '_blank'));
-                      }}
-                      className="hidden sm:flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-indigo-300 bg-slate-950 px-2 py-0.5 rounded-md border border-slate-800 hover:border-slate-700 shrink-0 transition-colors cursor-pointer"
-                      title="Open all detected links in new browser tabs"
-                    >
-                      <span>Open All ({selectedCandidate.links.length})</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-              )}
 
               {/* Stage Body: Distraction-Free Document Canvas */}
               <div className="flex-1 overflow-hidden bg-slate-900/60 p-3 flex justify-center">
@@ -1410,32 +1635,158 @@ const CVParserApp = () => {
             <div className="flex-1 overflow-y-auto p-4 space-y-5">
               {/* Score summary cards */}
               <div className="grid grid-cols-3 gap-2">
-                <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Match</span>
-                  <div className="text-xl font-black text-indigo-400 font-mono mt-0.5">
+                <div
+                  className={`border p-2.5 rounded-xl ${
+                    selectedCandidate.isOverridden
+                      ? 'bg-purple-950/40 border-purple-800/50 text-purple-300'
+                      : selectedCandidate.computedStatus === 'accepted'
+                      ? 'bg-emerald-950/40 border-emerald-800/50 text-emerald-300'
+                      : 'bg-rose-950/40 border-rose-800/50 text-rose-300'
+                  }`}
+                >
+                  <span className="text-[10px] font-bold uppercase tracking-wider opacity-75">Match</span>
+                  <div className="text-xl font-black font-mono mt-0.5">
                     {selectedCandidate.scorePercent}%
                   </div>
-                  <p className="text-[9px] text-slate-500">Overall</p>
+                  <p className="text-[9px] opacity-75">Overall</p>
                 </div>
 
-                <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Coverage</span>
-                  <div className="text-xl font-black text-emerald-400 font-mono mt-0.5">
+                <div
+                  className={`border p-2.5 rounded-xl ${getCoverageCardStyle(
+                    selectedCandidate.coveragePercent
+                  )}`}
+                >
+                  <span className="text-[10px] font-bold uppercase tracking-wider opacity-75">Coverage</span>
+                  <div className="text-xl font-black font-mono mt-0.5">
                     {selectedCandidate.coveragePercent}%
                   </div>
-                  <p className="text-[9px] text-slate-500">
-                    {selectedCandidate.matchedCount}/{selectedCandidate.totalPositive}
+                  <p className="text-[9px] opacity-75">
+                    {selectedCandidate.matchedCount}/{selectedCandidate.totalPositive} skills
                   </p>
+                  <div className="w-full bg-black/40 rounded-full h-1 mt-1.5 overflow-hidden border border-white/5">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${getCoverageBarColor(
+                        selectedCandidate.coveragePercent
+                      )}`}
+                      style={{ width: `${selectedCandidate.coveragePercent}%` }}
+                    />
+                  </div>
                 </div>
 
-                <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Depth</span>
-                  <div className="text-xl font-black text-purple-400 font-mono mt-0.5">
+                <div className="bg-purple-950/40 border border-purple-800/50 p-2.5 rounded-xl text-purple-300">
+                  <span className="text-[10px] font-bold uppercase tracking-wider opacity-75">Depth</span>
+                  <div className="text-xl font-black text-purple-300 font-mono mt-0.5">
                     {selectedCandidate.depthScore}
                   </div>
-                  <p className="text-[9px] text-slate-500">Freq pts</p>
+                  <p className="text-[9px] opacity-75">Freq pts</p>
                 </div>
               </div>
+
+              {/* Direct Candidate Contact & Outreach Card */}
+              {(selectedCandidate.contact?.primaryEmail || selectedCandidate.contact?.primaryPhone) && (
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2.5">
+                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-indigo-400" />
+                    Candidate Outreach
+                  </h4>
+
+                  {/* Email row */}
+                  {selectedCandidate.contact.primaryEmail && (
+                    <div className="flex items-center justify-between gap-2 p-2 bg-slate-900 rounded-lg border border-slate-800">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Mail className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-[9px] text-slate-500 font-semibold uppercase">Email</div>
+                          <a
+                            href={`mailto:${selectedCandidate.contact.primaryEmail}`}
+                            className="text-xs font-semibold text-slate-200 hover:text-indigo-300 transition-colors truncate block"
+                            title="Click to compose email"
+                          >
+                            {selectedCandidate.contact.primaryEmail}
+                          </a>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => copyToClipboard(selectedCandidate.contact.primaryEmail, 'Email')}
+                        className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                        title="Copy Email Address"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Bangladeshi / Intl Phone row */}
+                  {selectedCandidate.contact.primaryPhone && (
+                    <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="text-[9px] text-slate-500 font-semibold uppercase flex items-center gap-1">
+                              <span>Phone</span>
+                              {selectedCandidate.contact.primaryPhone.operator && (
+                                <span className="text-[9px] bg-slate-800 text-slate-400 px-1 rounded font-normal">
+                                  {selectedCandidate.contact.primaryPhone.operator}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-xs font-semibold text-slate-200 block font-mono whitespace-nowrap">
+                              {selectedCandidate.contact.primaryPhone.display}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => copyToClipboard(selectedCandidate.contact.primaryPhone.raw, 'Phone Number')}
+                          className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                          title="Copy Phone Number"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {/* WhatsApp Button on Next Line */}
+                      <a
+                        href={selectedCandidate.contact.primaryPhone.whatsappUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full mt-2 py-1.5 px-3 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 hover:text-white rounded-lg border border-emerald-800/60 transition-all text-xs flex items-center justify-center gap-1.5 font-semibold shadow-xs"
+                        title="Open WhatsApp Chat"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Open WhatsApp Chat</span>
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Experience & Seniority Breakdown Card */}
+              {selectedCandidate.experience && selectedCandidate.experience.level !== 'Not Specified' && selectedCandidate.experience.confidence !== 'low' && (
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2">
+                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Briefcase className="w-3.5 h-3.5 text-indigo-400" />
+                      Experience & Seniority
+                    </span>
+                    <span className="text-[10px] text-indigo-400 font-medium font-mono">
+                      {selectedCandidate.experience.yearsDisplay}
+                    </span>
+                  </h4>
+                  <div className="flex items-center justify-between p-2 bg-slate-900 rounded-lg border border-slate-800">
+                    <span className="text-xs font-bold text-slate-200">{selectedCandidate.experience.level}</span>
+                    <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                      {selectedCandidate.experience.confidence} confidence
+                    </span>
+                  </div>
+                  {selectedCandidate.experience.sourceSnippet && (
+                    <div className="p-2 bg-slate-900/60 rounded-lg border border-slate-800/60 text-[11px] font-mono text-slate-400">
+                      <span className="text-[9px] uppercase font-sans font-bold text-slate-500 block mb-0.5">Calculated from statement:</span>
+                      &quot;{selectedCandidate.experience.sourceSnippet}&quot;
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Dealbreaker Alert */}
               {selectedCandidate.hasDisqualifier && (
@@ -1453,9 +1804,19 @@ const CVParserApp = () => {
 
               {/* Matched Skills Table */}
               <div>
-                <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-                  Matched Skills ({selectedCandidate.foundKeywords.length})
-                </h4>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                    Matched Skills ({selectedCandidate.foundKeywords.length})
+                  </h4>
+                  <span
+                    className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border inline-flex items-center gap-1 ${getCoverageBadgeStyle(
+                      selectedCandidate.coveragePercent
+                    )}`}
+                  >
+                    <span className="w-1 h-1 rounded-full bg-current opacity-75" />
+                    {selectedCandidate.coveragePercent}% Coverage
+                  </span>
+                </div>
                 {selectedCandidate.foundKeywords.length === 0 ? (
                   <p className="text-xs text-slate-500 bg-slate-950 p-3 rounded-xl text-center border border-slate-800">
                     No positive skills detected.
@@ -1613,10 +1974,21 @@ const CVParserApp = () => {
             </div>
 
             {/* Modal Tabs */}
-            <div className="px-6 border-b border-slate-800 bg-slate-950 flex gap-6 text-xs font-semibold text-slate-400">
+            <div className="px-6 border-b border-slate-800 bg-slate-950 flex gap-5 text-xs font-semibold text-slate-400 overflow-x-auto">
+              <button
+                onClick={() => setSetupTab('jd')}
+                className={`py-3 border-b-2 transition-colors flex items-center gap-1.5 shrink-0 ${
+                  setupTab === 'jd'
+                    ? 'border-indigo-500 text-white'
+                    : 'border-transparent hover:text-slate-200 text-indigo-400'
+                }`}
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+                <span>✨ Auto-Extract from JD</span>
+              </button>
               <button
                 onClick={() => setSetupTab('skills')}
-                className={`py-3 border-b-2 transition-colors ${
+                className={`py-3 border-b-2 transition-colors shrink-0 ${
                   setupTab === 'skills'
                     ? 'border-indigo-500 text-white'
                     : 'border-transparent hover:text-slate-200'
@@ -1626,7 +1998,7 @@ const CVParserApp = () => {
               </button>
               <button
                 onClick={() => setSetupTab('disqualifiers')}
-                className={`py-3 border-b-2 transition-colors ${
+                className={`py-3 border-b-2 transition-colors shrink-0 ${
                   setupTab === 'disqualifiers'
                     ? 'border-rose-500 text-white'
                     : 'border-transparent hover:text-slate-200'
@@ -1636,7 +2008,7 @@ const CVParserApp = () => {
               </button>
               <button
                 onClick={() => setSetupTab('upload')}
-                className={`py-3 border-b-2 transition-colors ${
+                className={`py-3 border-b-2 transition-colors shrink-0 ${
                   setupTab === 'upload'
                     ? 'border-emerald-500 text-white'
                     : 'border-transparent hover:text-slate-200'
@@ -1647,7 +2019,167 @@ const CVParserApp = () => {
             </div>
 
             {/* Modal Tab Content */}
-            <div className="p-6 overflow-y-auto flex-1 space-y-5 bg-slate-900">
+            <div className="p-6 pb-12 overflow-y-auto flex-1 space-y-5 bg-slate-900">
+              {/* TAB 0: AUTO-EXTRACT FROM JOB DESCRIPTION */}
+              {setupTab === 'jd' && (
+                <div className="space-y-4">
+                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <Wand2 className="w-4 h-4 text-indigo-400" />
+                          Paste Job Description (JD)
+                        </h3>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Auto-extracts required tech stacks, tools, methodologies, and smart weights.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className="text-[10px] text-slate-500 font-semibold mr-1">Load Demo:</span>
+                        {SAMPLE_JDS.map((sample, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              setJdInputText(sample.text);
+                              handleExtractFromJd(sample.text);
+                            }}
+                            className="text-[10px] bg-slate-900 hover:bg-slate-800 text-indigo-300 hover:text-white px-2 py-1 rounded border border-slate-800 transition-colors cursor-pointer"
+                          >
+                            {sample.title.split(' ')[1]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <textarea
+                      value={jdInputText}
+                      onChange={(e) => {
+                        setJdInputText(e.target.value);
+                        if (e.target.value.trim().length > 30) {
+                          handleExtractFromJd(e.target.value);
+                        }
+                      }}
+                      rows={6}
+                      placeholder="Paste full Job Description here (e.g. We are looking for a Senior Flutter/React Developer with 4+ years of experience in Dart, BLoC, REST APIs, Firebase...)"
+                      className="w-full text-xs font-sans p-3 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 leading-relaxed"
+                    />
+
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[11px] text-slate-500 font-mono">
+                        {jdInputText.trim() ? `${jdInputText.trim().split(/\s+/).length} words entered` : 'Ready for input'}
+                      </span>
+                      <button
+                        onClick={() => handleExtractFromJd(jdInputText)}
+                        disabled={!jdInputText.trim() || isExtractingJd}
+                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>{isExtractingJd ? 'Extracting...' : 'Scan & Extract Skills'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Extracted Results Sheet */}
+                  {extractedJdResult && (
+                    <div className="bg-slate-950 p-4 rounded-xl border border-indigo-500/30 space-y-4 animate-in fade-in-50 duration-150">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <CheckCircle className="w-4 h-4 text-emerald-400" />
+                          <span className="text-xs font-bold text-white">
+                            {extractedJdResult.stats.totalFound} Skills Identified in JD
+                          </span>
+                          <span className="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800/60 px-2 py-0.5 rounded-full font-mono font-bold">
+                            {extractedJdResult.stats.requiredCount} Must-Haves (W: 8-10)
+                          </span>
+                        </div>
+
+                        <button
+                          onClick={handleApplyJdCriteria}
+                          className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Check className="w-4 h-4" />
+                          <span>Apply to Scoring Matrix</span>
+                        </button>
+                      </div>
+
+                      {/* Skills interactive chips grid */}
+                      <div className="space-y-2">
+                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                          Review Extracted Skills (Toggle on/off or adjust weights):
+                        </span>
+                        <div className="flex flex-wrap gap-2.5 p-1 pb-3">
+                          {extractedJdResult.skills.map((skill, idx) => (
+                            <div
+                              key={skill.id}
+                              onClick={() => toggleJdSkillSelection(idx)}
+                              className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-all flex items-center gap-2 cursor-pointer select-none ${
+                                skill.selected
+                                  ? skill.importance === 'required'
+                                    ? 'bg-indigo-950/90 text-indigo-200 border-indigo-500/80 shadow-xs ring-1 ring-indigo-500/40'
+                                    : 'bg-slate-800 text-slate-200 border-slate-600 shadow-xs'
+                                  : 'bg-slate-900/60 text-slate-500 border-slate-800 opacity-60'
+                              }`}
+                            >
+                              <div
+                                className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] ${
+                                  skill.selected ? 'bg-indigo-500 text-white font-bold' : 'border border-slate-600'
+                                }`}
+                              >
+                                {skill.selected && '✓'}
+                              </div>
+                              <span className="font-semibold">{skill.keyword}</span>
+                              <span className="text-[10px] text-slate-400 uppercase font-mono">
+                                {CATEGORY_LABELS[skill.category] || skill.category}
+                              </span>
+
+                              {/* Weight controls */}
+                              <div
+                                className="flex items-center gap-1 bg-black/40 px-1.5 py-0.5 rounded-md border border-slate-700/60"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <span className="text-[10px] font-mono font-bold text-indigo-300">W:{skill.weight}</span>
+                                <button
+                                  onClick={() => updateJdSkillWeight(idx, -1)}
+                                  className="text-slate-400 hover:text-white px-1 text-[10px] font-bold"
+                                >
+                                  -
+                                </button>
+                                <button
+                                  onClick={() => updateJdSkillWeight(idx, 1)}
+                                  className="text-slate-400 hover:text-white px-1 text-[10px] font-bold"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Suggested Disqualifiers if found */}
+                      {extractedJdResult.suggestedDisqualifiers && extractedJdResult.suggestedDisqualifiers.length > 0 && (
+                        <div className="pt-2 border-t border-slate-800">
+                          <span className="text-[11px] font-bold text-rose-400 uppercase tracking-wider block mb-2">
+                            Potential Dealbreakers Detected in JD:
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            {extractedJdResult.suggestedDisqualifiers.map((dis, idx) => (
+                              <span
+                                key={idx}
+                                className="px-2.5 py-1 rounded-lg bg-rose-950 text-rose-300 border border-rose-800 text-xs font-medium flex items-center gap-1.5"
+                              >
+                                <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                                <span>{dis.keyword}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* TAB 1: REQUIRED SKILLS */}
               {setupTab === 'skills' && (
                 <div className="space-y-4">
@@ -1685,7 +2217,7 @@ const CVParserApp = () => {
                     </div>
 
                     {/* Presets Chips Grid */}
-                    <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto p-1 bg-slate-950/40 rounded-xl border border-slate-800/80">
+                    <div className="flex flex-wrap gap-1.5 p-2 bg-slate-950/40 rounded-xl border border-slate-800/80">
                       {displayedPresets.map((preset, idx) => {
                         const isAdded = positiveKeywords.some(
                           (k) => k.keyword.toLowerCase() === preset.keyword.toLowerCase()
@@ -2093,6 +2625,14 @@ const CVParserApp = () => {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Floating Toast Notification */}
+      {copiedToast && (
+        <div className="fixed bottom-5 right-5 z-50 bg-slate-900 border border-indigo-500/50 text-indigo-200 px-4 py-2.5 rounded-xl shadow-2xl text-xs font-semibold flex items-center gap-2 animate-in slide-in-from-bottom-3 duration-200">
+          <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{copiedToast}</span>
         </div>
       )}
     </div>

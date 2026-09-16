@@ -244,9 +244,11 @@ export function extractCandidateName(fileName, text) {
   // Fallback: format filename nicely
   let clean = fileName.replace(/\.(pdf|docx|zip)$/i, '');
   clean = clean.replace(/^(cv[\s_-]+of[\s_-]+|resume[\s_-]+of[\s_-]+|cv[\s_-]+|resume[\s_-]+)/i, '');
+  clean = clean.replace(/[\s_-]+(cv|resume|curriculum|vitae|developer|flutter|mobile|engineer|fullstack|frontend|backend)[\s_-]*/gi, ' ');
   clean = clean.replace(/[_-]+/g, ' ').trim();
   return clean
-    .split(' ')
+    .split(/\s+/)
+    .filter(Boolean)
     .map((w) => (w.length > 0 ? w[0].toUpperCase() + w.slice(1) : ''))
     .join(' ');
 }
