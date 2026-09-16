@@ -1059,9 +1059,20 @@ Requirements:
             <div className="p-1.5 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-lg">
               <Sparkles className="w-4 h-4" />
             </div>
-            <span className="text-sm font-black tracking-tight text-white">
-              CV Screener
-            </span>
+            <div>
+              <span className="text-sm font-black tracking-tight text-white leading-none">
+                CV Screener
+              </span>
+              <a
+                href="https://shakil2995.github.io/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[9.5px] text-slate-400 hover:text-indigo-400 transition-colors font-medium block leading-tight mt-0.5"
+                title="Made by Shakil Ahmed"
+              >
+                by Shakil Ahmed ↗
+              </a>
+            </div>
           </div>
 
           <div className="h-4 w-px bg-slate-800 hidden sm:block" />
@@ -1675,10 +1686,21 @@ Requirements:
               </p>
               <button
                 onClick={() => setShowSetupModal(true)}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-xs transition-colors shadow-xs"
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-xs transition-colors shadow-xs mb-4 cursor-pointer"
               >
                 Open Criteria & Files
               </button>
+              <div className="text-[11px] text-slate-500">
+                Created by{' '}
+                <a
+                  href="https://shakil2995.github.io/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-indigo-400 hover:underline font-medium"
+                >
+                  Shakil Ahmed ↗
+                </a>
+              </div>
             </div>
           )}
         </main>
@@ -2671,11 +2693,20 @@ Requirements:
                 </div>
               ) : (
                 <div className="flex items-center justify-between">
-                  <div className="text-xs text-slate-400 flex items-center gap-1.5">
-                    <Info className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>
+                  <div className="text-xs text-slate-400 flex items-center gap-2">
+                    <span className="flex items-center gap-1.5">
+                      <Info className="w-3.5 h-3.5 text-indigo-400" />
                       {positiveKeywords.length} skills • {files.length} files ready
                     </span>
+                    <span className="text-slate-600 hidden sm:inline">•</span>
+                    <a
+                      href="https://shakil2995.github.io/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hidden sm:inline-block text-slate-500 hover:text-indigo-400 transition-colors"
+                    >
+                      Created by Shakil Ahmed ↗
+                    </a>
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -2806,7 +2837,16 @@ Requirements:
             </div>
 
             {/* Modal Footer */}
-            <div className="p-3 border-t border-slate-800 bg-slate-950 flex items-center justify-end">
+            <div className="p-3 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
+              <a
+                href="https://shakil2995.github.io/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-slate-500 hover:text-indigo-400 transition-colors"
+                title="Made by Shakil Ahmed"
+              >
+                Made by Shakil Ahmed ↗
+              </a>
               <button
                 onClick={() => setShowShortcutsModal(false)}
                 className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer"
