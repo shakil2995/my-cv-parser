@@ -109,7 +109,14 @@ export function calculateCandidateScore(
 
   // 1. Process Positive Keywords & Must-Haves
   positiveKeywords.forEach((posItem) => {
-    const { keyword, weight = 5, category = 'soft', mustHave = false } = posItem;
+    if (!posItem) return;
+    const keyword = typeof posItem === 'string' ? posItem : posItem.keyword;
+    if (!keyword || typeof keyword !== 'string' || !keyword.trim()) return;
+
+    const weight = typeof posItem === 'object' && posItem.weight !== undefined ? posItem.weight : 5;
+    const category = typeof posItem === 'object' && posItem.category ? posItem.category : 'soft';
+    const mustHave = typeof posItem === 'object' && posItem.mustHave ? posItem.mustHave : false;
+
     const isMustHave = Boolean(mustHave);
     if (isMustHave) mustHaveCount++;
 
@@ -120,6 +127,7 @@ export function calculateCandidateScore(
     // Baseline depth score assumes 1 solid occurrence
     maxPossibleDepthScore += numWeight * catMultiplier;
 
+    // Build regex and check matches
     const regex = createTokenRegex(keyword);
     if (!regex) return;
 
@@ -136,7 +144,7 @@ export function calculateCandidateScore(
       rawDepthScore += points;
 
       foundKeywords.push({
-        id: posItem.id,
+        id: typeof posItem === 'object' ? posItem.id : keyword,
         keyword,
         matches: count,
         points,
@@ -155,7 +163,7 @@ export function calculateCandidateScore(
       }
     } else if (isMustHave) {
       missingMustHaves.push({
-        id: posItem.id,
+        id: typeof posItem === 'object' ? posItem.id : keyword,
         keyword,
         weight: numWeight,
         category,
@@ -168,7 +176,10 @@ export function calculateCandidateScore(
   let penaltyPoints = 0;
 
   negativeKeywords.forEach((negItem) => {
+    if (!negItem) return;
     const keyword = typeof negItem === 'string' ? negItem : negItem.keyword;
+    if (!keyword || typeof keyword !== 'string' || !keyword.trim()) return;
+
     const type = typeof negItem === 'object' && negItem.type ? negItem.type : 'penalty';
     const penaltyValue = typeof negItem === 'object' && negItem.penalty ? negItem.penalty : 5;
 
@@ -226,7 +237,7 @@ export function calculateCandidateScore(
 
   const coveragePercent = totalPossibleWeight > 0
     ? Math.round((matchedWeight / totalPossibleWeight) * 100)
-    : (totalPositive === 0 ? 100 : 0);
+    : 0;
 
   // Normalized Depth (capped smoothly at 100%)
   const normalizedDepth = maxPossibleDepthScore > 0

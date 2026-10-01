@@ -1,5 +1,6 @@
 import React from 'react';
 import { Globe, Mail, ExternalLink, Link2 } from 'lucide-react';
+import { findHighlightRanges } from './highlightRanges';
 
 // Regex patterns for URLs and emails
 const URL_REGEX = /(https?:\/\/[^\s<>"'{}|\\^`]+|(?:www\.)[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:\/[^\s<>"'{}|\\^`]*)?|(?:github\.com|linkedin\.com\/(?:in|company)|gitlab\.com|behance\.net|dribbble\.com)\/[a-zA-Z0-9_./-]+)/gi;
@@ -166,6 +167,47 @@ export function linkifyContent(text, linkClassName = 'text-indigo-400 hover:text
 
     return part;
   });
+}
+
+const HIGHLIGHT_CLASSES = {
+  accept: 'bg-emerald-100 text-emerald-900 ring-1 ring-emerald-300',
+  acceptMustHave: 'bg-emerald-200 text-emerald-950 ring-1 ring-emerald-500 font-semibold',
+  reject: 'bg-rose-100 text-rose-900 ring-1 ring-rose-300',
+  rejectDisqualifier: 'bg-rose-200 text-rose-950 ring-1 ring-rose-500 font-semibold',
+};
+
+/**
+ * Linkify text and highlight matched skills (accept, green) and negative keywords (reject, red).
+ */
+export function highlightContent(text, positives = [], negatives = [], linkClassName) {
+  if (!text || typeof text !== 'string') return text;
+
+  const ranges = findHighlightRanges(text, positives, negatives);
+  if (ranges.length === 0) return linkifyContent(text, linkClassName);
+
+  const out = [];
+  let cursor = 0;
+  ranges.forEach((r, idx) => {
+    if (r.start > cursor) {
+      out.push(<React.Fragment key={`t${idx}`}>{linkifyContent(text.slice(cursor, r.start), linkClassName)}</React.Fragment>);
+    }
+    const isReject = r.kind === 'reject';
+    const strong = isReject ? r.type === 'disqualifier' : r.mustHave;
+    const className = HIGHLIGHT_CLASSES[isReject ? (strong ? 'rejectDisqualifier' : 'reject') : (strong ? 'acceptMustHave' : 'accept')];
+    const label = isReject
+      ? `${r.type === 'disqualifier' ? 'Disqualifier' : 'Penalty'}: ${r.keyword}`
+      : `${r.mustHave ? 'Must-have skill' : 'Matched skill'}: ${r.keyword}`;
+    out.push(
+      <mark key={`h${idx}`} className={`rounded px-0.5 ${className}`} title={label}>
+        {text.slice(r.start, r.end)}
+      </mark>
+    );
+    cursor = r.end;
+  });
+  if (cursor < text.length) {
+    out.push(<React.Fragment key="tail">{linkifyContent(text.slice(cursor), linkClassName)}</React.Fragment>);
+  }
+  return out;
 }
 
 /**

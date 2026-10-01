@@ -17,6 +17,17 @@ body {
   min-height: 100vh;
 }
 
+/* Translucent Selection Highlight Overlay (Preserves original text color) */
+::selection {
+  background-color: rgba(99, 102, 241, 0.35);
+  color: inherit;
+}
+
+::-moz-selection {
+  background-color: rgba(99, 102, 241, 0.35);
+  color: inherit;
+}
+
 /* Custom Sleek Dark Scrollbars */
 ::-webkit-scrollbar {
   width: 7px;
@@ -41,3 +52,61 @@ body {
   scrollbar-color: #1e293b #090d16;
 }
 
+
+/* pdf.js text layer (subset of pdfjs-dist/web/pdf_viewer.css) used by PdfHighlightViewer */
+.pdf-page .textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 0;
+}
+
+.pdf-page .textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.pdf-page .textLayer span.markedContent {
+  top: 0;
+  height: 0;
+}
+
+.pdf-page .textLayer ::selection {
+  background: rgb(99 102 241 / 0.3);
+}
+
+.pdf-page .textLayer mark.pdf-hl {
+  color: transparent;
+  border-radius: 2px;
+  padding: 0;
+  margin: 0;
+  cursor: help;
+}
+
+.pdf-page .textLayer mark.pdf-hl-accept {
+  background: rgb(16 185 129 / 0.28);
+  box-shadow: 0 0 0 1px rgb(16 185 129 / 0.45);
+}
+
+.pdf-page .textLayer mark.pdf-hl-accept.pdf-hl-strong {
+  background: rgb(16 185 129 / 0.45);
+  box-shadow: 0 0 0 1.5px rgb(4 120 87 / 0.8);
+}
+
+.pdf-page .textLayer mark.pdf-hl-reject {
+  background: rgb(244 63 94 / 0.28);
+  box-shadow: 0 0 0 1px rgb(244 63 94 / 0.45);
+}
+
+.pdf-page .textLayer mark.pdf-hl-reject.pdf-hl-strong {
+  background: rgb(244 63 94 / 0.45);
+  box-shadow: 0 0 0 1.5px rgb(190 18 60 / 0.8);
+}

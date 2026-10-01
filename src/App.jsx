@@ -40,7 +40,8 @@ import {
   BookOpen,
   Keyboard,
   MapPin,
-  Flag
+  Flag,
+  Highlighter
 } from 'lucide-react';
 import JSZip from 'jszip';
 import {
@@ -52,12 +53,14 @@ import { extractTextFromFile, extractFilesFromZip } from './utils/documentParser
 import {
   extractLinksFromDocument,
   linkifyContent,
+  highlightContent,
   renderLinkIcon
 } from './utils/linkExtractor';
 import { extractContactDetails } from './utils/contactExtractor';
 import { extractLocationDetails } from './utils/locationExtractor';
 import { extractSkillsFromJD, SKILL_KNOWLEDGE_BASE } from './utils/jdExtractor';
 import { detectExperienceLevel } from './utils/experienceDetector';
+import PdfHighlightViewer from './components/PdfHighlightViewer';
 
 const SKILL_CATEGORIES = [
   {
@@ -248,8 +251,14 @@ const CVParserApp = () => {
   // Inspector panel toggle
   const [showInspector, setShowInspector] = useState(true);
 
-  // Keywords configuration - starts empty by default
-  const [positiveKeywords, setPositiveKeywords] = useState([]);
+  // Keywords configuration - starter skills so skill checking works immediately
+  const [positiveKeywords, setPositiveKeywords] = useState([
+    { id: 'def-1', keyword: 'React', weight: 8, category: 'technical', mustHave: false },
+    { id: 'def-2', keyword: 'JavaScript', weight: 7, category: 'technical', mustHave: false },
+    { id: 'def-3', keyword: 'Node.js', weight: 8, category: 'technical', mustHave: false },
+    { id: 'def-4', keyword: 'Python', weight: 8, category: 'technical', mustHave: false },
+    { id: 'def-5', keyword: 'Communication', weight: 5, category: 'soft', mustHave: false },
+  ]);
   const [negativeKeywords, setNegativeKeywords] = useState([]);
   const [bangladeshiOnly, setBangladeshiOnly] = useState(true); // Bangladeshi Only dealbreaker: ON by default
 
@@ -287,6 +296,7 @@ const CVParserApp = () => {
   // Selected candidate in Master-Detail view
   const [selectedCandidateId, setSelectedCandidateId] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
+  const [pdfViewMode, setPdfViewMode] = useState('highlighted'); // 'original' | 'highlighted'
 
   // Auto open setup modal on initial load if no files exist
   useEffect(() => {
@@ -807,6 +817,9 @@ const CVParserApp = () => {
       } else if (e.key === 'i' || e.key === 'I') {
         e.preventDefault();
         setShowInspector((prev) => !prev);
+      } else if (e.key === 'h' || e.key === 'H') {
+        e.preventDefault();
+        setPdfViewMode((prev) => (prev === 'original' ? 'highlighted' : 'original'));
       } else if (e.key === 'c' || e.key === 'C') {
         e.preventDefault();
         setShowSetupModal(true);
@@ -1092,8 +1105,36 @@ Requirements:
     URL.revokeObjectURL(url);
   };
 
+  // Extracted-text reader with auto-linkified URLs & emails and skill highlights (DOCX, and PDF fallback)
+  const renderTextReader = (candidate) => (
+    <div className="w-full h-full max-w-3xl overflow-y-auto p-8 bg-white text-slate-900 rounded-xl shadow-2xl">
+      <div className="text-[11px] text-slate-400 font-mono mb-4 pb-2 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+        <span>DOCUMENT READER (.{candidate.fileType === 'PDF' ? 'PDF TEXT' : 'DOCX'})</span>
+        <span className="flex items-center gap-2 font-sans">
+          <span className="inline-flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-sm bg-emerald-200 ring-1 ring-emerald-400" />
+            Matched ({candidate.foundKeywords.length})
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-sm bg-rose-200 ring-1 ring-rose-400" />
+            Negative ({candidate.foundNegatives?.length || 0})
+          </span>
+          <span className="font-mono">{candidate.fullText?.length || 0} chars</span>
+        </span>
+      </div>
+      <div className="text-xs leading-relaxed font-sans whitespace-pre-wrap text-slate-800 selection:bg-indigo-100">
+        {highlightContent(
+          candidate.fullText,
+          candidate.foundKeywords,
+          candidate.foundNegatives,
+          'text-indigo-600 hover:text-indigo-800 underline font-medium transition-colors cursor-pointer'
+        ) || 'No text extracted from this document.'}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="w-full h-screen flex flex-col bg-slate-900 text-slate-100 overflow-hidden font-sans antialiased select-none">
+    <div className="w-full h-screen flex flex-col bg-slate-900 text-slate-100 overflow-hidden font-sans antialiased">
       {/* 1. TOP HEADER (52px high, dark minimal theme) */}
       <header className="h-[52px] bg-slate-900 border-b border-slate-800 px-4 flex items-center justify-between shrink-0 z-30">
         {/* Left branding and criteria preview */}
@@ -1181,18 +1222,24 @@ Requirements:
           </div>
         ) : candidates.length > 0 && (
           <div className="hidden md:flex items-center gap-1 bg-slate-800/80 p-1 rounded-lg text-xs font-semibold">
-            <span className="px-2 py-0.5 text-slate-300">{poolCounts.all} Total</span>
-            <span className="px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/40">
-              {poolCounts.accepted} Shortlisted
-            </span>
-            <span className="px-2 py-0.5 rounded bg-rose-950/80 text-rose-400 border border-rose-800/40">
-              {poolCounts.rejected} Rejected
-            </span>
-            {poolCounts.starred > 0 && (
-              <span className="px-2 py-0.5 rounded bg-amber-950/80 text-amber-400 border border-amber-800/40">
-                ★ {poolCounts.starred}
-              </span>
-            )}
+            {[
+              { tab: 'all', label: `${poolCounts.all} Total`, idle: 'text-slate-300 border-transparent hover:bg-slate-700/60', active: 'bg-slate-600 text-white border-slate-500' },
+              { tab: 'shortlisted', label: `${poolCounts.accepted} Shortlisted`, idle: 'bg-emerald-950/80 text-emerald-400 border-emerald-800/40 hover:bg-emerald-900/80', active: 'bg-emerald-600 text-white border-emerald-500' },
+              { tab: 'rejected', label: `${poolCounts.rejected} Rejected`, idle: 'bg-rose-950/80 text-rose-400 border-rose-800/40 hover:bg-rose-900/80', active: 'bg-rose-600 text-white border-rose-500' },
+              ...(poolCounts.starred > 0
+                ? [{ tab: 'starred', label: `★ ${poolCounts.starred}`, idle: 'bg-amber-950/80 text-amber-400 border-amber-800/40 hover:bg-amber-900/80', active: 'bg-amber-600 text-white border-amber-500' }]
+                : []),
+            ].map(({ tab, label, idle, active }) => (
+              <button
+                key={tab}
+                onClick={() => setSidebarTab(tab)}
+                aria-pressed={sidebarTab === tab}
+                className={`px-2 py-0.5 rounded border transition-colors cursor-pointer ${sidebarTab === tab ? active : idle}`}
+                title={`Show ${tab === 'all' ? 'all' : tab} candidates`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         )}
 
@@ -1694,6 +1741,23 @@ Requirements:
                     <kbd className="px-1 py-0.2 text-[9px] font-mono rounded bg-white/15 border border-white/20 text-white shadow-2xs">S</kbd>
                   </button>
 
+
+
+                  {/* PDF view toggle: original PDF vs extracted text with skill highlights */}
+                  {selectedCandidate.fileType === 'PDF' && (
+                    <button
+                      onClick={() => setPdfViewMode(pdfViewMode === 'original' ? 'highlighted' : 'original')}
+                      className={`p-1.5 rounded-lg border transition-all text-xs ${
+                        pdfViewMode === 'highlighted'
+                          ? 'bg-emerald-600 text-white border-emerald-500'
+                          : 'bg-slate-800 text-slate-400 hover:text-white border-slate-700'
+                      }`}
+                      title={pdfViewMode === 'highlighted' ? 'Switch to native PDF viewer [H]' : 'Show skill highlights on PDF [H]'}
+                    >
+                      <Highlighter className="w-4 h-4" />
+                    </button>
+                  )}
+
                   {/* Open in New Tab Button */}
                   {pdfUrl && (
                     <a
@@ -1733,35 +1797,31 @@ Requirements:
 
               {/* Stage Body: Distraction-Free Document Canvas */}
               <div className="flex-1 overflow-hidden bg-slate-900/60 p-3 flex justify-center">
-                {selectedCandidate.fileType === 'PDF' ? (
-                  pdfUrl ? (
-                    <div className="w-full h-full max-w-5xl rounded-xl overflow-hidden shadow-2xl bg-white border border-slate-800">
-                      {/* Embed with #toolbar=0&navpanes=0 and allow popups so external links escape smoothly */}
-                      <iframe
-                        src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`}
-                        className="w-full h-full border-0 bg-white"
-                        title="CV Resume Preview"
-                        allow="popups; popups-to-escape-sandbox"
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-slate-500 text-xs">
-                      Loading PDF...
-                    </div>
-                  )
+                {selectedCandidate.fileType !== 'PDF' ? (
+                  renderTextReader(selectedCandidate)
+                ) : pdfViewMode === 'highlighted' && fileMap.get(selectedCandidate.name) ? (
+                  <div className="w-full h-full max-w-5xl">
+                    <PdfHighlightViewer
+                      key={selectedCandidate.name}
+                      file={fileMap.get(selectedCandidate.name)}
+                      positives={selectedCandidate.foundKeywords}
+                      negatives={selectedCandidate.foundNegatives}
+                      fallback={renderTextReader(selectedCandidate)}
+                    />
+                  </div>
+                ) : pdfUrl ? (
+                  <div className="w-full h-full max-w-5xl rounded-xl overflow-hidden shadow-2xl bg-white border border-slate-800">
+                    {/* Embed with #toolbar=0&navpanes=0 and allow popups so external links escape smoothly */}
+                    <iframe
+                      src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`}
+                      className="w-full h-full border-0 bg-white"
+                      title="CV Resume Preview"
+                      allow="popups; popups-to-escape-sandbox"
+                    />
+                  </div>
                 ) : (
-                  /* Formatted DOCX Reader with auto-linkified URLs & emails */
-                  <div className="w-full h-full max-w-3xl overflow-y-auto p-8 bg-white text-slate-900 rounded-xl shadow-2xl">
-                    <div className="text-[11px] text-slate-400 font-mono mb-4 pb-2 border-b border-slate-200 flex justify-between">
-                      <span>DOCUMENT READER (.DOCX)</span>
-                      <span>{selectedCandidate.fullText?.length || 0} characters</span>
-                    </div>
-                    <div className="text-xs leading-relaxed font-sans whitespace-pre-wrap text-slate-800 selection:bg-indigo-100">
-                      {linkifyContent(
-                        selectedCandidate.fullText,
-                        'text-indigo-600 hover:text-indigo-800 underline font-medium transition-colors cursor-pointer'
-                      ) || 'No text extracted from this document.'}
-                    </div>
+                  <div className="flex items-center justify-center h-full text-slate-500 text-xs">
+                    Loading PDF...
                   </div>
                 )}
               </div>
@@ -2197,19 +2257,19 @@ Requirements:
 
       {/* 3. DEDICATED SETUP & UPLOAD MODAL */}
       {showSetupModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4 sm:p-6 md:p-8">
+          <div className="bg-slate-900 border border-slate-800/90 rounded-2xl shadow-2xl w-full max-w-4xl lg:max-w-5xl h-[85vh] min-h-[580px] max-h-[820px] overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
             {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-lg border border-indigo-500/30">
+            <div className="px-7 py-4.5 border-b border-slate-800 flex items-center justify-between bg-slate-950">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-500/20 text-indigo-400 rounded-xl border border-indigo-500/30">
                   <Settings2 className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-base font-bold text-white">
+                  <h2 className="text-base sm:text-lg font-bold text-white">
                     Screening Criteria & Resumes
                   </h2>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-400 mt-0.5">
                     Configure your required skills, dealbreakers, and upload candidates
                   </p>
                 </div>
@@ -2217,77 +2277,79 @@ Requirements:
 
               <button
                 onClick={() => setShowSetupModal(false)}
-                className="px-2 py-1 text-slate-400 hover:text-white rounded-lg transition-colors flex items-center gap-1.5 hover:bg-slate-800"
+                className="px-2.5 py-1.5 text-slate-400 hover:text-white rounded-xl transition-colors flex items-center gap-2 hover:bg-slate-800 cursor-pointer"
                 title="Close (Esc)"
               >
                 <kbd className="px-1.5 py-0.5 text-[9px] font-mono bg-white/10 text-white border border-white/20 rounded">ESC</kbd>
-                <X className="w-4 h-4" />
+                <X className="w-4.5 h-4.5" />
               </button>
             </div>
 
-            {/* Modal Tabs */}
-            <div className="px-6 border-b border-slate-800 bg-slate-950 flex gap-5 text-xs font-semibold text-slate-400 overflow-x-auto">
-              <button
-                onClick={() => setSetupTab('jd')}
-                className={`py-3 border-b-2 transition-colors flex items-center gap-1.5 shrink-0 ${
-                  setupTab === 'jd'
-                    ? 'border-indigo-500 text-white'
-                    : 'border-transparent hover:text-slate-200 text-indigo-400'
-                }`}
-              >
-                <Wand2 className="w-3.5 h-3.5" />
-                <span>✨ Auto-Extract from JD</span>
-              </button>
-              <button
-                onClick={() => setSetupTab('skills')}
-                className={`py-3 border-b-2 transition-colors shrink-0 ${
-                  setupTab === 'skills'
-                    ? 'border-indigo-500 text-white'
-                    : 'border-transparent hover:text-slate-200'
-                }`}
-              >
-                1. Required Skills ({positiveKeywords.length})
-              </button>
-              <button
-                onClick={() => setSetupTab('disqualifiers')}
-                className={`py-3 border-b-2 transition-colors shrink-0 ${
-                  setupTab === 'disqualifiers'
-                    ? 'border-rose-500 text-white'
-                    : 'border-transparent hover:text-slate-200'
-                }`}
-              >
-                2. Dealbreakers ({negativeKeywords.length})
-              </button>
-              <button
-                onClick={() => setSetupTab('upload')}
-                className={`py-3 border-b-2 transition-colors shrink-0 ${
-                  setupTab === 'upload'
-                    ? 'border-emerald-500 text-white'
-                    : 'border-transparent hover:text-slate-200'
-                }`}
-              >
-                3. Upload Resumes ({files.length})
-              </button>
+            {/* Modal Tabs Bar */}
+            <div className="border-b border-slate-800 bg-slate-950 px-5 sm:px-7">
+              <div className="flex items-center gap-1.5 sm:gap-3 overflow-x-auto h-13 min-h-[52px] -mb-px scrollbar-none [::-webkit-scrollbar]:hidden">
+                <button
+                  onClick={() => setSetupTab('jd')}
+                  className={`px-3.5 sm:px-4 h-full border-b-2 transition-all flex items-center gap-2 shrink-0 cursor-pointer font-semibold text-xs sm:text-sm rounded-t-xl ${
+                    setupTab === 'jd'
+                      ? 'border-indigo-500 text-white bg-indigo-500/10'
+                      : 'border-transparent text-indigo-400/90 hover:text-white hover:bg-slate-900/60'
+                  }`}
+                >
+                  <Wand2 className="w-4 h-4" />
+                  <span>✨ Auto-Extract from JD</span>
+                </button>
+                <button
+                  onClick={() => setSetupTab('skills')}
+                  className={`px-3.5 sm:px-4 h-full border-b-2 transition-all flex items-center gap-2 shrink-0 cursor-pointer font-semibold text-xs sm:text-sm rounded-t-xl ${
+                    setupTab === 'skills'
+                      ? 'border-indigo-500 text-white bg-indigo-500/10'
+                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+                  }`}
+                >
+                  <span>1. Required Skills ({positiveKeywords.length})</span>
+                </button>
+                <button
+                  onClick={() => setSetupTab('disqualifiers')}
+                  className={`px-3.5 sm:px-4 h-full border-b-2 transition-all flex items-center gap-2 shrink-0 cursor-pointer font-semibold text-xs sm:text-sm rounded-t-xl ${
+                    setupTab === 'disqualifiers'
+                      ? 'border-rose-500 text-white bg-rose-500/10'
+                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+                  }`}
+                >
+                  <span>2. Dealbreakers ({negativeKeywords.length})</span>
+                </button>
+                <button
+                  onClick={() => setSetupTab('upload')}
+                  className={`px-3.5 sm:px-4 h-full border-b-2 transition-all flex items-center gap-2 shrink-0 cursor-pointer font-semibold text-xs sm:text-sm rounded-t-xl ${
+                    setupTab === 'upload'
+                      ? 'border-emerald-500 text-white bg-emerald-500/10'
+                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+                  }`}
+                >
+                  <span>3. Upload Resumes ({files.length})</span>
+                </button>
+              </div>
             </div>
 
             {/* Modal Tab Content */}
-            <div className="p-6 pb-12 overflow-y-auto flex-1 space-y-5 bg-slate-900">
+            <div className="p-6 sm:p-8 pb-14 overflow-y-auto flex-1 space-y-6 sm:space-y-7 bg-slate-900">
               {/* TAB 0: AUTO-EXTRACT FROM JOB DESCRIPTION */}
               {setupTab === 'jd' && (
-                <div className="space-y-4">
-                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="space-y-5">
+                  <div className="bg-slate-950 p-5 sm:p-6 rounded-2xl border border-slate-800 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div>
-                        <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
-                          <Wand2 className="w-4 h-4 text-indigo-400" />
+                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                          <Wand2 className="w-4.5 h-4.5 text-indigo-400" />
                           Paste Job Description (JD)
                         </h3>
-                        <p className="text-[11px] text-slate-400 mt-0.5">
+                        <p className="text-xs text-slate-400 mt-1">
                           Auto-extracts required tech stacks, tools, methodologies, and smart weights.
                         </p>
                       </div>
-                      <div className="flex items-center gap-1 flex-wrap">
-                        <span className="text-[10px] text-slate-500 font-semibold mr-1">Load Demo:</span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs text-slate-500 font-semibold mr-1">Load Demo:</span>
                         {SAMPLE_JDS.map((sample, idx) => (
                           <button
                             key={idx}
@@ -2295,7 +2357,7 @@ Requirements:
                               setJdInputText(sample.text);
                               handleExtractFromJd(sample.text);
                             }}
-                            className="text-[10px] bg-slate-900 hover:bg-slate-800 text-indigo-300 hover:text-white px-2 py-1 rounded border border-slate-800 transition-colors cursor-pointer"
+                            className="text-xs bg-slate-900 hover:bg-slate-800 text-indigo-300 hover:text-white px-2.5 py-1 rounded-lg border border-slate-800 transition-colors cursor-pointer"
                           >
                             {sample.title.split(' ')[1]}
                           </button>
@@ -2313,19 +2375,19 @@ Requirements:
                       }}
                       rows={6}
                       placeholder="Paste full Job Description here (e.g. We are looking for a Senior Flutter/React Developer with 4+ years of experience in Dart, BLoC, REST APIs, Firebase...)"
-                      className="w-full text-xs font-sans p-3 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 leading-relaxed"
+                      className="w-full text-xs sm:text-sm font-sans p-4 bg-slate-900 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 leading-relaxed shadow-inner"
                     />
 
                     <div className="flex items-center justify-between pt-1">
-                      <span className="text-[11px] text-slate-500 font-mono">
+                      <span className="text-xs text-slate-500 font-mono">
                         {jdInputText.trim() ? `${jdInputText.trim().split(/\s+/).length} words entered` : 'Ready for input'}
                       </span>
                       <button
                         onClick={() => handleExtractFromJd(jdInputText)}
                         disabled={!jdInputText.trim() || isExtractingJd}
-                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl text-xs sm:text-sm font-bold transition-colors flex items-center gap-2 cursor-pointer shadow-xs"
                       >
-                        <Sparkles className="w-3.5 h-3.5" />
+                        <Sparkles className="w-4 h-4" />
                         <span>{isExtractingJd ? 'Extracting...' : 'Scan & Extract Skills'}</span>
                       </button>
                     </div>
@@ -2333,49 +2395,47 @@ Requirements:
 
                   {/* Extracted Results Sheet */}
                   {extractedJdResult && (
-                    <div className="bg-slate-950 p-4 rounded-xl border border-indigo-500/30 space-y-4 animate-in fade-in-50 duration-150">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <CheckCircle className="w-4 h-4 text-emerald-400" />
-                          <span className="text-xs font-bold text-white">
+                    <div className="bg-slate-950 p-5 sm:p-6 rounded-2xl border border-indigo-500/30 space-y-5 animate-in fade-in-50 duration-150">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <CheckCircle className="w-5 h-5 text-emerald-400" />
+                          <span className="text-sm font-bold text-white">
                             {extractedJdResult.stats.totalFound} Skills Identified in JD
                           </span>
-                          <span className="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800/60 px-2 py-0.5 rounded-full font-mono font-bold">
-                            {extractedJdResult.stats.requiredCount} Must-Haves (W: 8-10)
+                          <span className="text-xs bg-indigo-950 text-indigo-300 border border-indigo-800/60 px-2.5 py-0.5 rounded-full font-mono font-bold">
+                            {extractedJdResult.skills.filter((s) => s.mustHave).length} Must-Haves
                           </span>
                         </div>
 
                         <button
                           onClick={handleApplyJdCriteria}
-                          className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                          className="px-4.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs sm:text-sm font-bold transition-all shadow-md flex items-center gap-2 cursor-pointer"
                         >
-                          <Check className="w-4 h-4" />
+                          <Check className="w-4.5 h-4.5" />
                           <span>Apply to Scoring Matrix</span>
                         </button>
                       </div>
 
                       {/* Skills interactive chips grid */}
-                      <div className="space-y-2">
-                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                      <div className="space-y-3">
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
                           Review Extracted Skills (Toggle on/off, adjust weights, or mark Must-Have):
                         </span>
-                        <div className="flex flex-wrap gap-2.5 p-1 pb-3">
+                        <div className="flex flex-wrap gap-2.5 p-1 pb-2">
                           {extractedJdResult.skills.map((skill, idx) => (
                             <div
                               key={skill.id}
                               onClick={() => toggleJdSkillSelection(idx)}
-                              className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-all flex items-center gap-2 cursor-pointer select-none ${
+                              className={`px-3.5 py-2 rounded-xl border text-xs font-medium transition-all flex items-center gap-2.5 cursor-pointer select-none shadow-xs ${
                                 skill.selected
-                                  ? skill.mustHave
-                                    ? 'bg-amber-950/80 text-amber-200 border-amber-500/80 shadow-xs ring-1 ring-amber-500/40'
-                                    : skill.importance === 'required'
-                                    ? 'bg-indigo-950/90 text-indigo-200 border-indigo-500/80 shadow-xs ring-1 ring-indigo-500/40'
-                                    : 'bg-slate-800 text-slate-200 border-slate-600 shadow-xs'
+                                  ? skill.importance === 'required'
+                                    ? 'bg-indigo-950/90 text-indigo-200 border-indigo-500/80 ring-1 ring-indigo-500/30'
+                                    : 'bg-slate-800 text-slate-200 border-slate-600'
                                   : 'bg-slate-900/60 text-slate-500 border-slate-800 opacity-60'
                               }`}
                             >
                               <div
-                                className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] ${
+                                className={`w-4 h-4 rounded flex items-center justify-center text-[10px] ${
                                   skill.selected ? 'bg-indigo-500 text-white font-bold' : 'border border-slate-600'
                                 }`}
                               >
@@ -2393,10 +2453,10 @@ Requirements:
                                   e.stopPropagation();
                                   toggleJdSkillMustHave(idx);
                                 }}
-                                className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold transition-all cursor-pointer ${
+                                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-xs ${
                                   skill.mustHave
-                                    ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
-                                    : 'bg-slate-800 text-slate-400 hover:text-amber-300 hover:bg-slate-700'
+                                    ? 'bg-amber-500 text-slate-950 hover:bg-amber-400 ring-1 ring-amber-400/50'
+                                    : 'bg-slate-800 text-slate-400 hover:text-amber-300 hover:bg-slate-700 border border-slate-700/60'
                                 }`}
                                 title="Toggle Must-Have requirement for this skill"
                               >
@@ -2405,19 +2465,19 @@ Requirements:
 
                               {/* Weight controls */}
                               <div
-                                className="flex items-center gap-1 bg-black/40 px-1.5 py-0.5 rounded-md border border-slate-700/60"
+                                className="flex items-center gap-1 bg-black/40 px-2 py-0.5 rounded-lg border border-slate-700/60"
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <span className="text-[10px] font-mono font-bold text-indigo-300">W:{skill.weight}</span>
+                                <span className="text-[10px] font-mono font-bold text-indigo-300 mr-0.5">W:{skill.weight}</span>
                                 <button
                                   onClick={() => updateJdSkillWeight(idx, -1)}
-                                  className="text-slate-400 hover:text-white px-1 text-[10px] font-bold"
+                                  className="text-slate-400 hover:text-white px-1 py-0.5 text-xs font-bold hover:bg-slate-700 rounded transition-colors"
                                 >
                                   -
                                 </button>
                                 <button
                                   onClick={() => updateJdSkillWeight(idx, 1)}
-                                  className="text-slate-400 hover:text-white px-1 text-[10px] font-bold"
+                                  className="text-slate-400 hover:text-white px-1 py-0.5 text-xs font-bold hover:bg-slate-700 rounded transition-colors"
                                 >
                                   +
                                 </button>
@@ -2429,17 +2489,17 @@ Requirements:
 
                       {/* Suggested Disqualifiers if found */}
                       {extractedJdResult.suggestedDisqualifiers && extractedJdResult.suggestedDisqualifiers.length > 0 && (
-                        <div className="pt-2 border-t border-slate-800">
-                          <span className="text-[11px] font-bold text-rose-400 uppercase tracking-wider block mb-2">
+                        <div className="pt-3 border-t border-slate-800 space-y-2">
+                          <span className="text-xs font-bold text-rose-400 uppercase tracking-wider block">
                             Potential Dealbreakers Detected in JD:
                           </span>
-                          <div className="flex flex-wrap gap-2">
+                          <div className="flex flex-wrap gap-2.5">
                             {extractedJdResult.suggestedDisqualifiers.map((dis, idx) => (
                               <span
                                 key={idx}
-                                className="px-2.5 py-1 rounded-lg bg-rose-950 text-rose-300 border border-rose-800 text-xs font-medium flex items-center gap-1.5"
+                                className="px-3 py-1.5 rounded-xl bg-rose-950 text-rose-300 border border-rose-800 text-xs font-medium flex items-center gap-2"
                               >
-                                <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                                <ShieldAlert className="w-4 h-4 text-rose-400" />
                                 <span>{dis.keyword}</span>
                               </span>
                             ))}
@@ -2453,34 +2513,34 @@ Requirements:
 
               {/* TAB 1: REQUIRED SKILLS */}
               {setupTab === 'skills' && (
-                <div className="space-y-4">
+                <div className="space-y-6">
                   {/* Quick Presets Catalog */}
-                  <div className="space-y-2.5">
+                  <div className="space-y-3.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                      <span className="text-xs sm:text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-indigo-400" />
                         Quick Add Skills by Role
                       </span>
-                      <span className="text-[10px] text-slate-500">
+                      <span className="text-xs text-slate-500">
                         Click any chip to toggle on/off
                       </span>
                     </div>
 
                     {/* Category Selector Pills */}
-                    <div className="flex flex-wrap gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800 text-xs">
+                    <div className="flex flex-wrap gap-1.5 p-1.5 bg-slate-950 rounded-xl border border-slate-800 text-xs sm:text-xs">
                       {SKILL_CATEGORIES.map((cat) => {
                         const Icon = cat.icon;
                         return (
                           <button
                             key={cat.id}
                             onClick={() => setPresetCategoryTab(cat.id)}
-                            className={`px-2.5 py-1 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+                            className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-2 cursor-pointer ${
                               presetCategoryTab === cat.id
                                 ? 'bg-indigo-600 text-white shadow-xs'
                                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
                             }`}
                           >
-                            {Icon && <Icon className="w-3.5 h-3.5" />}
+                            {Icon && <Icon className="w-4 h-4" />}
                             <span>{cat.name}</span>
                           </button>
                         );
@@ -2488,7 +2548,7 @@ Requirements:
                     </div>
 
                     {/* Presets Chips Grid */}
-                    <div className="flex flex-wrap gap-1.5 p-2 bg-slate-950/40 rounded-xl border border-slate-800/80">
+                    <div className="flex flex-wrap gap-2 p-3 sm:p-3.5 bg-slate-950/50 rounded-2xl border border-slate-800/80">
                       {displayedPresets.map((preset, idx) => {
                         const isAdded = positiveKeywords.some(
                           (k) => k.keyword.toLowerCase() === preset.keyword.toLowerCase()
@@ -2498,7 +2558,7 @@ Requirements:
                           <button
                             key={idx}
                             onClick={() => togglePresetSkill(preset)}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5 ${
+                            className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all flex items-center gap-2 cursor-pointer ${
                               isAdded
                                 ? 'bg-indigo-950 text-indigo-200 border-indigo-500 shadow-xs ring-1 ring-indigo-500/40'
                                 : 'bg-slate-800/90 hover:bg-slate-800 text-slate-300 border-slate-700/80 hover:border-slate-600'
@@ -2518,42 +2578,42 @@ Requirements:
                   </div>
 
                   {/* Add Custom Skill Form */}
-                  <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
-                    <span className="text-xs font-bold text-slate-300">Add Custom Skill</span>
-                    <div className="flex flex-wrap items-center gap-2">
+                  <div className="p-5 sm:p-6 bg-slate-950 rounded-2xl border border-slate-800 space-y-4">
+                    <span className="text-xs sm:text-sm font-bold text-slate-300 block">Add Custom Skill</span>
+                    <div className="flex flex-wrap items-center gap-2.5">
                       <input
                         type="text"
                         placeholder="Skill keyword (e.g. Flutter, C++, GraphQL, AWS)"
                         value={newPosKeyword}
                         onChange={(e) => setNewPosKeyword(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && addPositiveKeyword()}
-                        className="flex-1 min-w-[160px] px-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-indigo-500"
+                        className="flex-1 min-w-[200px] px-3.5 py-2 text-xs sm:text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-indigo-500"
                       />
                       <select
                         value={newPosCategory}
                         onChange={(e) => setNewPosCategory(e.target.value)}
-                        className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-slate-200 focus:outline-none"
+                        className="px-3 py-2 text-xs sm:text-sm bg-slate-900 border border-slate-700 rounded-xl text-slate-200 focus:outline-none cursor-pointer"
                       >
                         <option value="technical">💻 Technical (1.2×)</option>
                         <option value="soft">🤝 Soft Skill (1.0×)</option>
                         <option value="cert">📜 Certification (1.1×)</option>
                       </select>
-                      <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 px-2 py-1 rounded-lg">
-                        <span className="text-[10px] text-slate-400 font-bold">Weight:</span>
+                      <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-xl">
+                        <span className="text-xs text-slate-400 font-bold">Weight:</span>
                         <input
                           type="number"
                           min="1"
                           max="10"
                           value={newPosWeight}
                           onChange={(e) => setNewPosWeight(e.target.value)}
-                          className="w-8 text-xs bg-transparent text-center font-bold text-white focus:outline-none"
+                          className="w-8 text-xs sm:text-sm bg-transparent text-center font-bold text-white focus:outline-none"
                         />
                       </div>
 
                       {/* Must-Have Toggle Checkbox */}
-                      <label className={`flex items-center gap-1.5 px-2.5 py-1.5 border rounded-lg text-xs cursor-pointer select-none transition-all ${
+                      <label className={`flex items-center gap-2 px-3 py-2 border rounded-xl text-xs sm:text-sm cursor-pointer select-none transition-all ${
                         newPosMustHave
-                          ? 'bg-amber-950/80 text-amber-200 border-amber-600/70 shadow-xs'
+                          ? 'bg-slate-900 text-amber-200 border-amber-500/60 shadow-xs'
                           : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-600'
                       }`}>
                         <input
@@ -2562,13 +2622,19 @@ Requirements:
                           onChange={(e) => setNewPosMustHave(e.target.checked)}
                           className="sr-only"
                         />
-                        <span className="text-amber-400 font-bold">⭐</span>
-                        <span className="font-semibold">{newPosMustHave ? 'Must-Have: Yes' : 'Must-Have: No'}</span>
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-colors ${
+                          newPosMustHave
+                            ? 'bg-amber-500 text-slate-950 ring-1 ring-amber-400/50'
+                            : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          ⭐ Must-Have
+                        </span>
+                        <span className="font-semibold">{newPosMustHave ? 'Yes' : 'No'}</span>
                       </label>
 
                       <button
                         onClick={addPositiveKeyword}
-                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                        className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer"
                       >
                         Add Skill
                       </button>
@@ -2576,14 +2642,14 @@ Requirements:
                   </div>
 
                   {/* Active Skills List */}
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xs sm:text-sm font-bold text-slate-400 uppercase tracking-wider">
                           Active Required Skills ({positiveKeywords.length}):
                         </span>
                         {positiveKeywords.filter((k) => k.mustHave).length > 0 && (
-                          <span className="text-[10px] bg-amber-950 text-amber-300 border border-amber-700/60 px-2 py-0.2 rounded-full font-bold font-mono">
+                          <span className="text-xs bg-indigo-950 text-amber-300 border border-amber-500/40 px-2.5 py-0.5 rounded-full font-bold font-mono">
                             ⭐ {positiveKeywords.filter((k) => k.mustHave).length} Must-Have
                           </span>
                         )}
@@ -2591,7 +2657,7 @@ Requirements:
                       {positiveKeywords.length > 0 && (
                         <button
                           onClick={() => setPositiveKeywords([])}
-                          className="text-[11px] text-rose-400 hover:underline font-medium cursor-pointer"
+                          className="text-xs text-rose-400 hover:underline font-medium cursor-pointer"
                         >
                           Clear All
                         </button>
@@ -2599,28 +2665,24 @@ Requirements:
                     </div>
 
                     {positiveKeywords.length === 0 ? (
-                      <div className="p-4 bg-slate-950/60 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500">
+                      <div className="p-5 bg-slate-950/60 rounded-2xl border border-dashed border-slate-800 text-center text-xs sm:text-sm text-slate-500">
                         No required skills active yet. Click any skill chip above or add a custom keyword to start.
                       </div>
                     ) : (
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2.5">
                         {positiveKeywords.map((item) => (
                           <span
                             key={item.id}
-                            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border font-medium transition-all ${
-                              item.mustHave
-                                ? 'bg-amber-950/50 text-amber-200 border-amber-600/70 shadow-xs ring-1 ring-amber-600/30'
-                                : 'bg-slate-800 text-slate-200 border-slate-700'
-                            }`}
+                            className="inline-flex items-center gap-2 text-xs sm:text-xs px-3 py-1.5 rounded-xl border font-medium transition-all bg-slate-800 text-slate-200 border-slate-700 shadow-xs"
                           >
                             <span className="font-bold">{item.keyword}</span>
                             <span className="text-[10px] text-indigo-400 font-mono">W:{item.weight}</span>
                             <button
                               type="button"
                               onClick={() => toggleSkillMustHave(item.id)}
-                              className={`px-1.5 py-0.2 rounded text-[9.5px] font-bold transition-colors cursor-pointer ${
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-colors cursor-pointer shadow-xs ${
                                 item.mustHave
-                                  ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
+                                  ? 'bg-amber-500 text-slate-950 hover:bg-amber-400 ring-1 ring-amber-400/50'
                                   : 'bg-slate-700/80 text-slate-400 hover:text-amber-300 hover:bg-slate-700'
                               }`}
                               title="Click to toggle Must-Have requirement (candidate must match this to be shortlisted)"
@@ -2632,7 +2694,7 @@ Requirements:
                               className="text-slate-500 hover:text-rose-400 ml-0.5 cursor-pointer"
                               title="Remove skill"
                             >
-                              <X className="w-3 h-3" />
+                              <X className="w-3.5 h-3.5" />
                             </button>
                           </span>
                         ))}
@@ -2644,21 +2706,21 @@ Requirements:
 
               {/* TAB 2: DEALBREAKERS */}
               {setupTab === 'disqualifiers' && (
-                <div className="space-y-4">
+                <div className="space-y-6">
                   {/* Bangladeshi Candidates Only Toggle Card */}
-                  <div className={`p-4 rounded-xl border transition-all ${
+                  <div className={`p-5 sm:p-6 rounded-2xl border transition-all ${
                     bangladeshiOnly
                       ? 'bg-emerald-950/40 border-emerald-600/70 shadow-sm'
                       : 'bg-slate-950 border-slate-800'
                   }`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg">🇧🇩</span>
-                          <span className="text-xs font-bold text-white uppercase tracking-wider">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-xl">🇧🇩</span>
+                          <span className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider">
                             Bangladeshi Candidates Only
                           </span>
-                          <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full border ${
+                          <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${
                             bangladeshiOnly
                               ? 'bg-emerald-900/90 text-emerald-300 border-emerald-600/60'
                               : 'bg-slate-800 text-slate-400 border-slate-700'
@@ -2666,10 +2728,10 @@ Requirements:
                             {bangladeshiOnly ? 'ON (Default)' : 'OFF'}
                           </span>
                         </div>
-                        <p className="text-[11.5px] text-slate-300 leading-relaxed">
+                        <p className="text-xs sm:text-[13px] text-slate-300 leading-relaxed">
                           Filters candidates based on <strong>Bangladeshi Phone Number</strong> (013–019, +880) and <strong>Country</strong>.
                         </p>
-                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                        <p className="text-xs text-slate-400 leading-relaxed space-y-1 pt-1">
                           • Rejects candidates whose resume mentions a <strong>foreign country</strong> (e.g. India, USA, Pakistan, Nigeria).
                           <br />
                           • Rejects candidates with <strong>foreign phone numbers</strong> (+91, +1, +44, etc.) if no BD phone is found.
@@ -2684,17 +2746,17 @@ Requirements:
                           onChange={(e) => setBangladeshiOnly(e.target.checked)}
                           className="sr-only peer"
                         />
-                        <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                        <div className="w-12 h-6.5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5.5 after:w-5.5 after:transition-all peer-checked:bg-emerald-600"></div>
                       </label>
                     </div>
                   </div>
 
                   {/* Common Dealbreaker Presets */}
-                  <div>
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-2">
+                  <div className="space-y-3">
+                    <span className="text-xs sm:text-sm font-bold text-slate-400 uppercase tracking-wider block">
                       Quick Add Common Dealbreakers:
                     </span>
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-2">
                       {DISQUALIFIER_PRESETS.map((preset, idx) => {
                         const isAdded = negativeKeywords.some(
                           (k) => k.keyword.toLowerCase() === preset.toLowerCase()
@@ -2703,7 +2765,7 @@ Requirements:
                           <button
                             key={idx}
                             onClick={() => togglePresetDisqualifier(preset)}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5 ${
+                            className={`px-3 py-1.5 rounded-xl text-xs sm:text-xs font-medium border transition-all flex items-center gap-2 cursor-pointer ${
                               isAdded
                                 ? 'bg-rose-950 text-rose-200 border-rose-600/80 shadow-xs ring-1 ring-rose-600/40'
                                 : 'bg-slate-800 hover:bg-slate-750 text-slate-300 border-slate-700'
@@ -2721,41 +2783,41 @@ Requirements:
                     </div>
                   </div>
 
-                  <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
-                    <span className="text-xs font-bold text-slate-300">Add Dealbreaker or Penalty</span>
-                    <div className="flex flex-wrap gap-2">
+                  <div className="p-5 sm:p-6 bg-slate-950 rounded-2xl border border-slate-800 space-y-4">
+                    <span className="text-xs sm:text-sm font-bold text-slate-300 block">Add Dealbreaker or Penalty</span>
+                    <div className="flex flex-wrap gap-2.5">
                       <input
                         type="text"
                         placeholder="Keyword (e.g. unauthorized, visa required)"
                         value={newNegKeyword}
                         onChange={(e) => setNewNegKeyword(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && addNegativeKeyword()}
-                        className="flex-1 min-w-[160px] px-3 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-rose-500"
+                        className="flex-1 min-w-[200px] px-3.5 py-2 text-xs sm:text-sm bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-rose-500"
                       />
                       <select
                         value={newNegType}
                         onChange={(e) => setNewNegType(e.target.value)}
-                        className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-slate-200 focus:outline-none"
+                        className="px-3 py-2 text-xs sm:text-sm bg-slate-900 border border-slate-700 rounded-xl text-slate-200 focus:outline-none cursor-pointer"
                       >
                         <option value="disqualifier">🚫 Dealbreaker (Instant Fail)</option>
                         <option value="penalty">⚠️ Soft Penalty (-5 pts)</option>
                       </select>
                       {newNegType === 'penalty' && (
-                        <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 px-2 py-1 rounded-lg">
-                          <span className="text-[10px] text-slate-400 font-bold">-pts:</span>
+                        <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-xl">
+                          <span className="text-xs text-slate-400 font-bold">-pts:</span>
                           <input
                             type="number"
                             min="1"
                             max="50"
                             value={newNegPenalty}
                             onChange={(e) => setNewNegPenalty(Number(e.target.value))}
-                            className="w-8 text-xs bg-transparent text-center font-bold text-white focus:outline-none"
+                            className="w-8 text-xs sm:text-sm bg-transparent text-center font-bold text-white focus:outline-none"
                           />
                         </div>
                       )}
                       <button
                         onClick={addNegativeKeyword}
-                        className="px-4 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                        className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer"
                       >
                         Add
                       </button>
@@ -2763,24 +2825,24 @@ Requirements:
                   </div>
 
                   {/* Active Negative List */}
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs sm:text-sm font-bold text-slate-400 uppercase tracking-wider">
                         Active Dealbreakers & Penalties ({negativeKeywords.length + (bangladeshiOnly ? 1 : 0)}):
                       </span>
                       {negativeKeywords.length > 0 && (
                         <button
                           onClick={() => setNegativeKeywords([])}
-                          className="text-[11px] text-rose-400 hover:underline font-medium cursor-pointer"
+                          className="text-xs text-rose-400 hover:underline font-medium cursor-pointer"
                         >
                           Clear Custom
                         </button>
                       )}
                     </div>
 
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2.5">
                       {bangladeshiOnly && (
-                        <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border bg-emerald-950/60 text-emerald-300 border-emerald-800/60 font-medium">
+                        <span className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border bg-emerald-950/60 text-emerald-300 border-emerald-800/60 font-medium">
                           <span>🇧🇩</span>
                           <span className="font-bold">Bangladeshi Only</span>
                           <span className="text-[10px] opacity-75">Dealbreaker</span>
@@ -2789,7 +2851,7 @@ Requirements:
                             className="text-slate-400 hover:text-white ml-1 cursor-pointer"
                             title="Disable Bangladeshi Only requirement"
                           >
-                            <X className="w-3 h-3" />
+                            <X className="w-3.5 h-3.5" />
                           </button>
                         </span>
                       )}
@@ -2797,7 +2859,7 @@ Requirements:
                       {negativeKeywords.map((neg) => (
                         <span
                           key={neg.id}
-                          className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border font-medium ${
+                          className={`inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border font-medium ${
                             neg.type === 'disqualifier'
                               ? 'bg-rose-950/60 text-rose-300 border-rose-800/60'
                               : 'bg-amber-950/60 text-amber-300 border-amber-800/60'
@@ -2811,13 +2873,13 @@ Requirements:
                             onClick={() => removeNegativeKeyword(neg.id)}
                             className="text-slate-400 hover:text-white ml-1 cursor-pointer"
                           >
-                            <X className="w-3 h-3" />
+                            <X className="w-3.5 h-3.5" />
                           </button>
                         </span>
                       ))}
 
                       {!bangladeshiOnly && negativeKeywords.length === 0 && (
-                        <div className="p-3 bg-slate-950/60 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500 w-full">
+                        <div className="p-4 bg-slate-950/60 rounded-2xl border border-dashed border-slate-800 text-center text-xs sm:text-sm text-slate-500 w-full">
                           No dealbreakers configured. Candidates will be judged solely on positive match score.
                         </div>
                       )}
@@ -2828,7 +2890,7 @@ Requirements:
 
               {/* TAB 3: UPLOAD RESUMES */}
               {setupTab === 'upload' && (
-                <div className="space-y-4">
+                <div className="space-y-5 flex flex-col">
                   {/* Dropzone */}
                   <div
                     onDragOver={(e) => {
@@ -2841,7 +2903,7 @@ Requirements:
                       setIsDragging(false);
                       if (e.dataTransfer.files) handleFilesAdded(e.dataTransfer.files);
                     }}
-                    className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center ${
+                    className={`border-2 border-dashed rounded-2xl p-6 sm:p-8 text-center cursor-pointer transition-all flex flex-col items-center justify-center shrink-0 ${
                       isDragging
                         ? 'border-indigo-500 bg-indigo-950/30'
                         : 'border-slate-700 hover:border-indigo-500 bg-slate-950/60 hover:bg-slate-950'
@@ -2856,38 +2918,23 @@ Requirements:
                       id="modal-cv-file-input"
                     />
                     <label htmlFor="modal-cv-file-input" className="cursor-pointer flex flex-col items-center">
-                      <div className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl mb-3 border border-indigo-500/20">
+                      <div className="p-3.5 bg-indigo-500/10 text-indigo-400 rounded-2xl mb-3 border border-indigo-500/20">
                         <Upload className="w-6 h-6" />
                       </div>
-                      <span className="text-sm font-bold text-white mb-1">
+                      <span className="text-base sm:text-lg font-bold text-white mb-1">
                         Click or Drop PDF, DOCX, or ZIP Archives
                       </span>
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs sm:text-sm text-slate-400">
                         Bulk upload supported • Automatic ZIP unpacking
                       </span>
                     </label>
                   </div>
 
-                  {/* High Volume Safe Parsing Callout */}
-                  {files.length >= 10 && (
-                    <div className="flex items-start gap-2.5 p-3 bg-indigo-950/40 border border-indigo-500/30 rounded-xl text-xs text-indigo-300">
-                      <ShieldAlert className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-                      <div>
-                        <div className="font-bold text-white mb-0.5">
-                          High-Volume Crash Protection Active ({files.length} CVs)
-                        </div>
-                        <p className="text-slate-300 text-[11px] leading-relaxed">
-                          Engine safely parses documents with strict WebAssembly memory release and 35ms event-loop yielding. Designed to comfortably handle 100 to 500+ CV batches without tab memory spikes or crashes.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
                   {/* Queued Files List */}
                   {files.length > 0 && (
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-bold text-slate-300">
+                    <div className="space-y-3 flex-1 flex flex-col min-h-0">
+                      <div className="flex items-center justify-between shrink-0">
+                        <span className="text-xs sm:text-sm font-bold text-slate-300">
                           {files.length} Resume(s) Queued:
                         </span>
                         <button
@@ -2895,24 +2942,24 @@ Requirements:
                             setFiles([]);
                             setFileMap(new Map());
                           }}
-                          className="text-xs text-rose-400 hover:underline"
+                          className="text-xs text-rose-400 hover:underline cursor-pointer"
                         >
                           Clear All
                         </button>
                       </div>
 
-                      <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
+                      <div className="flex flex-wrap gap-2.5 max-h-[340px] overflow-y-auto pr-1 p-3 bg-slate-950/50 rounded-2xl border border-slate-800/80">
                         {files.map((file, idx) => (
                           <span
                             key={idx}
-                            className="inline-flex items-center gap-1.5 text-xs bg-slate-800 text-slate-200 px-2.5 py-1 rounded-lg border border-slate-700 font-medium"
+                            className="inline-flex items-center gap-2 text-xs bg-slate-800 text-slate-200 px-3 py-2 rounded-xl border border-slate-700 font-medium shadow-xs"
                           >
-                            <span className="truncate max-w-[180px]">{file.name}</span>
+                            <span className="truncate max-w-[220px]">{file.name}</span>
                             <button
                               onClick={() => removeFile(idx)}
-                              className="text-slate-500 hover:text-rose-400 ml-1"
+                              className="text-slate-500 hover:text-rose-400 ml-1 cursor-pointer"
                             >
-                              <X className="w-3 h-3" />
+                              <X className="w-3.5 h-3.5" />
                             </button>
                           </span>
                         ))}
@@ -2924,45 +2971,42 @@ Requirements:
             </div>
 
             {/* Modal Action Footer */}
-            <div className="px-6 py-3.5 border-t border-slate-800 bg-slate-950">
+            <div className="px-7 py-4 border-t border-slate-800 bg-slate-950">
               {processing ? (
-                <div className="w-full space-y-2.5">
+                <div className="w-full space-y-3">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping shrink-0" />
-                      <span className="text-xs font-bold text-white shrink-0">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-ping shrink-0" />
+                      <span className="text-xs sm:text-sm font-bold text-white shrink-0">
                         Analyzing {progress.current} of {progress.total} ({progress.percent}%)
                       </span>
                       <span className="text-slate-500 hidden sm:inline">•</span>
-                      <span className="text-[11px] text-slate-400 truncate max-w-[220px] hidden sm:inline" title={progress.fileName}>
+                      <span className="text-xs text-slate-400 truncate max-w-[240px] hidden sm:inline" title={progress.fileName}>
                         {progress.fileName}
                       </span>
                     </div>
 
                     <button
                       onClick={cancelProcessing}
-                      className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors shadow-xs shrink-0 cursor-pointer"
+                      className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs sm:text-sm flex items-center gap-1.5 transition-colors shadow-xs shrink-0 cursor-pointer"
                     >
-                      <XCircle className="w-3.5 h-3.5" />
+                      <XCircle className="w-4 h-4" />
                       <span>Stop & Keep Parsed</span>
                     </button>
                   </div>
 
                   {/* Progress Bar */}
-                  <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                  <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-indigo-500 rounded-full transition-all duration-150"
                       style={{ width: `${progress.percent}%` }}
                     />
                   </div>
 
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <div className="flex items-center justify-between text-xs text-slate-400">
                     <span>
                       Parsed: {progress.successCount} ok
                       {progress.errorCount > 0 && `, ${progress.errorCount} failed`}
-                    </span>
-                    <span className="text-indigo-400/90 font-medium">
-                      Zero-crash memory mode (35ms GC pause)
                     </span>
                   </div>
                 </div>
@@ -2970,7 +3014,7 @@ Requirements:
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-slate-400 flex items-center gap-2">
                     <span className="flex items-center gap-1.5">
-                      <Info className="w-3.5 h-3.5 text-indigo-400" />
+                      <Info className="w-4 h-4 text-indigo-400" />
                       {positiveKeywords.length} skills • {files.length} files ready
                     </span>
                     <span className="text-slate-600 hidden sm:inline">•</span>
@@ -2984,10 +3028,10 @@ Requirements:
                     </a>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2.5">
                     <button
                       onClick={() => setShowSetupModal(false)}
-                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg transition-colors"
+                      className="px-4.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs sm:text-sm font-semibold rounded-xl transition-colors cursor-pointer"
                     >
                       Close
                     </button>
@@ -2995,10 +3039,10 @@ Requirements:
                     <button
                       onClick={processFiles}
                       disabled={processing || files.length === 0}
-                      className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed shadow-sm cursor-pointer"
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs sm:text-sm flex items-center gap-2 transition-colors disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed shadow-sm cursor-pointer"
                     >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      Run Screener ({files.length} CVs)
+                      <Sparkles className="w-4 h-4" />
+                      <span>Run Screener ({files.length} CVs)</span>
                     </button>
                   </div>
                 </div>
@@ -3094,6 +3138,10 @@ Requirements:
                   <div className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
                     <span className="text-slate-300 font-medium">Toggle Inspector Panel</span>
                     <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">I</kbd>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
+                    <span className="text-slate-300 font-medium">Toggle PDF Skill Highlights</span>
+                    <kbd className="px-2 py-0.5 font-mono text-[10px] bg-white/10 text-white border border-white/20 rounded">H</kbd>
                   </div>
                   <div className="flex items-center justify-between p-2 bg-slate-950 rounded-lg border border-slate-800/80">
                     <span className="text-slate-300 font-medium">Open Criteria & Files Setup</span>
