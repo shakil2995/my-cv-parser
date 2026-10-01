@@ -53,23 +53,38 @@ export function createTokenRegex(token) {
 }
 
 /**
- * Calculate the dual-score for a candidate's CV text:
+ * Calculate the score and evaluate criteria/dealbreakers for a candidate's CV text:
  * 1. Skill Coverage %: (Weighted breadth of matched skills / Total possible weight) * 100
  * 2. Depth Score: Logarithmic frequency of matched skills with category multiplier
  * 3. Combined Match Score %: 70% Coverage + 30% Normalized Depth Score
+ * 4. Must-Have Skills Validation: Candidate must match all positive keywords marked as must-have
+ * 5. Dealbreaker & Location Validation: Handles standard disqualifiers and Bangladeshi-only enforcement
  *
  * @param {string} text - Raw extracted CV text
- * @param {Array<{ keyword: string, weight: number, category?: string }>} positiveKeywords
- * @param {Array<string | { keyword: string, type: 'disqualifier' | 'penalty', penalty?: number }>} negativeKeywords
+ * @param {Array<{ id?: string, keyword: string, weight: number, category?: string, mustHave?: boolean }>} positiveKeywords
+ * @param {Array<string | { id?: string, keyword: string, type: 'disqualifier' | 'penalty', penalty?: number }>} negativeKeywords
+ * @param {{ bangladeshiOnly?: boolean, contact?: object, location?: object }} options
  */
-export function calculateCandidateScore(text, positiveKeywords = [], negativeKeywords = []) {
+export function calculateCandidateScore(
+  text,
+  positiveKeywords = [],
+  negativeKeywords = [],
+  options = {}
+) {
+  const { bangladeshiOnly = false, contact = null, location = null } = options;
+
   if (!text) {
+    const missingMustHaves = positiveKeywords.filter((k) => k.mustHave);
     return {
       score: 0,
       scorePercent: 0,
       coveragePercent: 0,
       matchedCount: 0,
       totalPositive: positiveKeywords.length,
+      mustHaveCount: missingMustHaves.length,
+      matchedMustHaveCount: 0,
+      missingMustHaves,
+      hasMissingMustHave: missingMustHaves.length > 0,
       depthScore: 0,
       foundKeywords: [],
       foundNegatives: [],
@@ -83,14 +98,21 @@ export function calculateCandidateScore(text, positiveKeywords = [], negativeKey
   const foundNegatives = [];
   const disqualifiers = [];
   const snippets = [];
+  const missingMustHaves = [];
 
   let totalPossibleWeight = 0;
   let matchedWeight = 0;
   let rawDepthScore = 0;
   let maxPossibleDepthScore = 0;
+  let mustHaveCount = 0;
+  let matchedMustHaveCount = 0;
 
-  // 1. Process Positive Keywords
-  positiveKeywords.forEach(({ keyword, weight = 5, category = 'soft' }) => {
+  // 1. Process Positive Keywords & Must-Haves
+  positiveKeywords.forEach((posItem) => {
+    const { keyword, weight = 5, category = 'soft', mustHave = false } = posItem;
+    const isMustHave = Boolean(mustHave);
+    if (isMustHave) mustHaveCount++;
+
     const numWeight = Number(weight) || 5;
     const catMultiplier = CATEGORY_MULTIPLIERS[category] || 1.0;
     totalPossibleWeight += numWeight;
@@ -106,25 +128,24 @@ export function calculateCandidateScore(text, positiveKeywords = [], negativeKey
 
     if (count > 0) {
       matchedWeight += numWeight;
+      if (isMustHave) matchedMustHaveCount++;
 
-      // Diminishing returns formula:
-      // 1 match = 100% weight * multiplier
-      // 2 matches = 135%
-      // 4 matches = 170%
-      // 8 matches = 205%
+      // Diminishing returns formula
       const frequencyMultiplier = 1 + 0.35 * Math.log2(count);
       const points = Math.round(numWeight * frequencyMultiplier * catMultiplier * 10) / 10;
       rawDepthScore += points;
 
       foundKeywords.push({
+        id: posItem.id,
         keyword,
         matches: count,
         points,
         weight: numWeight,
         category,
+        mustHave: isMustHave,
       });
 
-      // Extract a representative snippet around the first match
+      // Extract representative snippet
       const firstIdx = text.toLowerCase().indexOf(keyword.toLowerCase());
       if (firstIdx !== -1) {
         const start = Math.max(0, firstIdx - 40);
@@ -132,6 +153,14 @@ export function calculateCandidateScore(text, positiveKeywords = [], negativeKey
         const snippetText = (start > 0 ? '...' : '') + text.substring(start, end).trim() + (end < text.length ? '...' : '');
         snippets.push({ keyword, snippet: snippetText });
       }
+    } else if (isMustHave) {
+      missingMustHaves.push({
+        id: posItem.id,
+        keyword,
+        weight: numWeight,
+        category,
+        mustHave: true,
+      });
     }
   });
 
@@ -151,7 +180,7 @@ export function calculateCandidateScore(text, positiveKeywords = [], negativeKey
 
     if (count > 0) {
       if (type === 'disqualifier') {
-        disqualifiers.push({ keyword, matches: count });
+        disqualifiers.push({ keyword, matches: count, type: 'disqualifier' });
       } else {
         penaltyPoints += penaltyValue * count;
       }
@@ -165,7 +194,33 @@ export function calculateCandidateScore(text, positiveKeywords = [], negativeKey
     }
   });
 
-  // 3. Compute Metrics
+  // 3. Process Bangladeshi Only Dealbreaker (if active)
+  if (bangladeshiOnly) {
+    // Check 1: Foreign Country detected (and not Bangladesh, empty is ok)
+    if (location && location.isForeign && location.country && location.country.toLowerCase() !== 'bangladesh') {
+      disqualifiers.push({
+        keyword: `Non-Bangladeshi Country (${location.country})`,
+        matches: 1,
+        type: 'dealbreaker',
+        reason: 'non-bd-country',
+        detail: location.displayLocation || location.country,
+      });
+    }
+
+    // Check 2: Phone number check (if phone exists and has foreign phone with no BD phone)
+    if (contact && contact.hasForeignPhone && !contact.hasBdPhone) {
+      const foreignPhone = contact.primaryPhone?.display || 'Foreign';
+      disqualifiers.push({
+        keyword: `Non-BD Phone (${foreignPhone})`,
+        matches: 1,
+        type: 'dealbreaker',
+        reason: 'non-bd-phone',
+        detail: foreignPhone,
+      });
+    }
+  }
+
+  // 4. Compute Metrics
   const matchedCount = foundKeywords.length;
   const totalPositive = positiveKeywords.length;
 
@@ -173,7 +228,7 @@ export function calculateCandidateScore(text, positiveKeywords = [], negativeKey
     ? Math.round((matchedWeight / totalPossibleWeight) * 100)
     : (totalPositive === 0 ? 100 : 0);
 
-  // Normalized Depth (capped smoothly at 100% to avoid single-keyword ballooning)
+  // Normalized Depth (capped smoothly at 100%)
   const normalizedDepth = maxPossibleDepthScore > 0
     ? Math.min(100, Math.round((rawDepthScore / maxPossibleDepthScore) * 100))
     : 0;
@@ -187,6 +242,7 @@ export function calculateCandidateScore(text, positiveKeywords = [], negativeKey
   combinedScore = Math.max(0, combinedScore - penaltyPoints);
 
   const hasDisqualifier = disqualifiers.length > 0;
+  const hasMissingMustHave = missingMustHaves.length > 0;
 
   return {
     score: combinedScore,
@@ -194,6 +250,10 @@ export function calculateCandidateScore(text, positiveKeywords = [], negativeKey
     coveragePercent,
     matchedCount,
     totalPositive,
+    mustHaveCount,
+    matchedMustHaveCount,
+    missingMustHaves,
+    hasMissingMustHave,
     depthScore: Math.round(rawDepthScore * 10) / 10,
     foundKeywords,
     foundNegatives,

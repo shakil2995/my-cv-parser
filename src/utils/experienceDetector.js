@@ -72,7 +72,7 @@ function isAcademicContext(lineContext) {
 /**
  * Merges overlapping or contiguous year intervals to accurately count unique career duration
  */
-function calculateIntervalsTotalYears(intervals, currentYear) {
+function calculateIntervalsTotalYears(intervals) {
   if (!intervals || intervals.length === 0) return 0;
 
   // Sort intervals by start year ascending

@@ -213,12 +213,15 @@ export function extractSkillsFromJD(jdText) {
         weight = item.category === 'soft' ? 5 : (item.category === 'cert' ? 7 : 7);
       }
 
+      const isMustHave = foundInReq;
+
       matchedSkills.push({
         id: `jd-skill-${matchedSkills.length}`,
         keyword: item.keyword,
         category: item.category,
         weight,
         importance,
+        mustHave: isMustHave,
         occurrences: totalMatches,
         selected: true, // checked by default in the interactive review modal
       });

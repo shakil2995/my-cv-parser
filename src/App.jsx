@@ -38,7 +38,9 @@ import {
   Briefcase,
   Wand2,
   BookOpen,
-  Keyboard
+  Keyboard,
+  MapPin,
+  Flag
 } from 'lucide-react';
 import JSZip from 'jszip';
 import {
@@ -53,6 +55,7 @@ import {
   renderLinkIcon
 } from './utils/linkExtractor';
 import { extractContactDetails } from './utils/contactExtractor';
+import { extractLocationDetails } from './utils/locationExtractor';
 import { extractSkillsFromJD, SKILL_KNOWLEDGE_BASE } from './utils/jdExtractor';
 import { detectExperienceLevel } from './utils/experienceDetector';
 
@@ -162,12 +165,12 @@ function getCandidateInitials(name) {
   let clean = name
     .replace(/\.(pdf|docx|doc|zip)$/i, '')
     .replace(/\b(cv|resume|curriculum|vitae|developer|engineer|flutter|mobile|senior|junior|lead|frontend|backend|fullstack|profile|doc)\b/gi, '')
-    .replace(/[_\-\.]+/g, ' ')
+    .replace(/[_.-]+/g, ' ')
     .trim();
 
   let parts = clean.split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
-    parts = name.replace(/\.(pdf|docx|doc)$/i, '').replace(/[_\-\.]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+    parts = name.replace(/\.(pdf|docx|doc)$/i, '').replace(/[_.-]+/g, ' ').trim().split(/\s+/).filter(Boolean);
   }
 
   if (parts.length >= 2) {
@@ -191,16 +194,6 @@ function getScoreBadgeStyle(isAccepted = false, isOverridden = false) {
     return 'bg-emerald-950/90 text-emerald-300 border-emerald-700/60 shadow-emerald-950/50';
   }
   return 'bg-rose-950/80 text-rose-300 border-rose-800/60 shadow-rose-950/50';
-}
-
-function getCoverageColor(coveragePercent) {
-  if (coveragePercent >= 70) {
-    return 'text-emerald-400';
-  }
-  if (coveragePercent >= 40) {
-    return 'text-amber-400';
-  }
-  return 'text-rose-400';
 }
 
 function getCoverageBadgeStyle(coveragePercent) {
@@ -258,11 +251,13 @@ const CVParserApp = () => {
   // Keywords configuration - starts empty by default
   const [positiveKeywords, setPositiveKeywords] = useState([]);
   const [negativeKeywords, setNegativeKeywords] = useState([]);
+  const [bangladeshiOnly, setBangladeshiOnly] = useState(true); // Bangladeshi Only dealbreaker: ON by default
 
   // Keyword input states
   const [newPosKeyword, setNewPosKeyword] = useState('');
   const [newPosWeight, setNewPosWeight] = useState(7);
   const [newPosCategory, setNewPosCategory] = useState('technical');
+  const [newPosMustHave, setNewPosMustHave] = useState(false);
   const [newNegKeyword, setNewNegKeyword] = useState('');
   const [newNegType, setNewNegType] = useState('disqualifier');
   const [newNegPenalty, setNewNegPenalty] = useState(5);
@@ -355,10 +350,18 @@ const CVParserApp = () => {
         id: String(Date.now()),
         keyword: newPosKeyword.trim(),
         weight: Number(newPosWeight) || 5,
-        category: newPosCategory
+        category: newPosCategory,
+        mustHave: newPosMustHave
       }
     ]);
     setNewPosKeyword('');
+    setNewPosMustHave(false);
+  };
+
+  const toggleSkillMustHave = (id) => {
+    setPositiveKeywords((prev) =>
+      prev.map((k) => (k.id === id ? { ...k, mustHave: !k.mustHave } : k))
+    );
   };
 
   // Presets filtering and toggle
@@ -395,7 +398,8 @@ const CVParserApp = () => {
           id: String(Date.now() + Math.random()),
           keyword: preset.keyword,
           weight: preset.weight,
-          category: preset.category
+          category: preset.category,
+          mustHave: preset.mustHave || false
         }
       ]);
     }
@@ -492,8 +496,13 @@ const CVParserApp = () => {
         const annotations = (docResult && docResult.annotations) || [];
         const links = extractLinksFromDocument(text, annotations);
         const contact = extractContactDetails(text, annotations);
+        const location = extractLocationDetails(text);
         const experience = detectExperienceLevel(text);
-        const scoreResult = calculateCandidateScore(text, positiveKeywords, negativeKeywords);
+        const scoreResult = calculateCandidateScore(text, positiveKeywords, negativeKeywords, {
+          bangladeshiOnly,
+          contact,
+          location
+        });
         const displayName = extractCandidateName(file.name, text);
 
         parsedCandidates.push({
@@ -504,6 +513,7 @@ const CVParserApp = () => {
           fullText: text,
           links,
           contact,
+          location,
           experience,
           ...scoreResult
         });
@@ -518,13 +528,18 @@ const CVParserApp = () => {
           fileType: file.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'DOCX',
           fullText: '',
           links: [],
-          contact: { emails: [], primaryEmail: null, phones: [], primaryPhone: null },
+          contact: { emails: [], primaryEmail: null, phones: [], primaryPhone: null, hasBdPhone: false, hasForeignPhone: false },
+          location: { country: null, city: null, displayLocation: null, isBangladesh: false, isForeign: false, sourceSnippet: null },
           experience: { level: 'Not Specified', badgeLabel: 'Exp: N/A', years: null, yearsDisplay: 'N/A', confidence: 'low', sourceSnippet: null, color: 'slate' },
           score: 0,
           scorePercent: 0,
           coveragePercent: 0,
           matchedCount: 0,
           totalPositive: positiveKeywords.length,
+          mustHaveCount: positiveKeywords.filter((k) => k.mustHave).length,
+          matchedMustHaveCount: 0,
+          missingMustHaves: positiveKeywords.filter((k) => k.mustHave),
+          hasMissingMustHave: positiveKeywords.some((k) => k.mustHave),
           depthScore: 0,
           foundKeywords: [],
           foundNegatives: [],
@@ -557,14 +572,27 @@ const CVParserApp = () => {
   // Enriched candidates list with live computed status, real-time dynamic scoring, contact, and experience
   const enrichedCandidates = useMemo(() => {
     return candidates.map((c) => {
+      // Ensure candidate has extracted links, contact, location, and experience
+      const candidateLinks = c.links || extractLinksFromDocument(c.fullText, []);
+      const candidateContact = c.contact || extractContactDetails(c.fullText, []);
+      const candidateLocation = c.location || extractLocationDetails(c.fullText);
+      const candidateExperience = c.experience || detectExperienceLevel(c.fullText);
+
       // Real-time live score calculation if keywords change after parsing
-      const scoreResult = c.fullText ? calculateCandidateScore(c.fullText, positiveKeywords, negativeKeywords) : c;
+      const scoreResult = c.fullText
+        ? calculateCandidateScore(c.fullText, positiveKeywords, negativeKeywords, {
+            bangladeshiOnly,
+            contact: candidateContact,
+            location: candidateLocation
+          })
+        : c;
+
       const isManual = manualOverrides[c.name];
       let status = 'rejected';
 
       if (isManual) {
         status = isManual;
-      } else if (scoreResult.hasDisqualifier) {
+      } else if (scoreResult.hasDisqualifier || scoreResult.hasMissingMustHave) {
         status = 'rejected';
       } else if (scoreResult.scorePercent >= passingThreshold) {
         status = 'accepted';
@@ -578,15 +606,11 @@ const CVParserApp = () => {
         (k) => !matchedSet.has(k.keyword.toLowerCase())
       );
 
-      // Ensure candidate has extracted links, contact, and experience
-      const candidateLinks = c.links || extractLinksFromDocument(c.fullText, []);
-      const candidateContact = c.contact || extractContactDetails(c.fullText, []);
-      const candidateExperience = c.experience || detectExperienceLevel(c.fullText);
-
       return {
         ...c,
         ...scoreResult,
         contact: candidateContact,
+        location: candidateLocation,
         experience: candidateExperience,
         links: candidateLinks,
         computedStatus: status,
@@ -595,7 +619,7 @@ const CVParserApp = () => {
         missingSkills
       };
     });
-  }, [candidates, manualOverrides, passingThreshold, favorites, positiveKeywords, negativeKeywords]);
+  }, [candidates, manualOverrides, passingThreshold, favorites, positiveKeywords, negativeKeywords, bangladeshiOnly]);
 
   // Filter and Sort Candidate List for Sidebar
   const { filteredCandidates, poolCounts, allSkills } = useMemo(() => {
@@ -908,6 +932,7 @@ Requirements:
         keyword: s.keyword,
         weight: s.weight,
         category: s.category,
+        mustHave: Boolean(s.mustHave),
       }));
 
     setPositiveKeywords(selectedSkills);
@@ -936,6 +961,18 @@ Requirements:
       updatedSkills[index] = {
         ...updatedSkills[index],
         selected: !updatedSkills[index].selected,
+      };
+      return { ...prev, skills: updatedSkills };
+    });
+  };
+
+  const toggleJdSkillMustHave = (index) => {
+    setExtractedJdResult((prev) => {
+      if (!prev) return prev;
+      const updatedSkills = [...prev.skills];
+      updatedSkills[index] = {
+        ...updatedSkills[index],
+        mustHave: !updatedSkills[index].mustHave,
       };
       return { ...prev, skills: updatedSkills };
     });
@@ -980,9 +1017,12 @@ Requirements:
       'Overall Match Score (%)',
       'Experience Level',
       'Estimated Years',
+      'Location / Country',
       'Email',
       'Phone (BD/Intl)',
       'Mobile Operator',
+      'Must-Haves Met',
+      'Missing Must-Haves',
       'Skill Coverage (%)',
       'Skills Matched Count',
       'Matched Skills',
@@ -999,13 +1039,16 @@ Requirements:
       c.scorePercent,
       `"${c.experience?.confidence !== 'low' ? (c.experience?.level || 'N/A') : 'N/A'}"`,
       `"${c.experience?.confidence !== 'low' ? (c.experience?.yearsDisplay || 'N/A') : 'N/A'}"`,
+      `"${c.location?.displayLocation || (c.location?.country || 'N/A')}"`,
       `"${c.contact?.primaryEmail || ''}"`,
       `"${c.contact?.primaryPhone?.display || ''}"`,
       `"${c.contact?.primaryPhone?.operator || ''}"`,
+      c.hasMissingMustHave ? 'NO' : (c.mustHaveCount > 0 ? 'YES' : 'N/A'),
+      `"${(c.missingMustHaves || []).map((m) => m.keyword).join(', ')}"`,
       `${c.coveragePercent}%`,
       `${c.matchedCount}/${c.totalPositive}`,
-      `"${c.foundKeywords.map((k) => `${k.keyword} (${k.matches}x)`).join(', ')}"`,
-      `"${c.missingSkills.map((k) => k.keyword).join(', ')}"`,
+      `"${c.foundKeywords.map((k) => `${k.keyword}${k.mustHave ? ' [MUST-HAVE]' : ''} (${k.matches}x)`).join(', ')}"`,
+      `"${c.missingSkills.map((k) => `${k.keyword}${k.mustHave ? ' [MUST-HAVE]' : ''}`).join(', ')}"`,
       `"${c.disqualifiers.map((d) => d.keyword).join(', ')}"`,
       c.computedStatus.toUpperCase(),
       c.isOverridden ? 'YES' : 'NO'
@@ -1085,8 +1128,27 @@ Requirements:
             <span className="font-semibold text-slate-300">
               {positiveKeywords.length} Required Skills
             </span>
+            {positiveKeywords.filter((k) => k.mustHave).length > 0 && (
+              <span className="text-[10px] bg-amber-950/90 text-amber-300 border border-amber-700/60 px-1.5 py-0.2 rounded font-bold font-mono">
+                ⭐ {positiveKeywords.filter((k) => k.mustHave).length} Must-Have
+              </span>
+            )}
             <span className="text-slate-500">•</span>
             <span>Cutoff: {passingThreshold}%</span>
+          </button>
+
+          {/* Bangladeshi Only Quick Switch */}
+          <button
+            onClick={() => setBangladeshiOnly((prev) => !prev)}
+            className={`hidden lg:flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border transition-colors cursor-pointer ${
+              bangladeshiOnly
+                ? 'bg-emerald-950/90 text-emerald-300 border-emerald-600/70 shadow-xs'
+                : 'bg-slate-800/60 text-slate-400 border-slate-700/60 hover:text-slate-200'
+            }`}
+            title="Toggle Bangladeshi Only Dealbreaker (Rejects non-BD phone / foreign country)"
+          >
+            <span className="text-sm leading-none">🇧🇩</span>
+            <span className="font-semibold">{bangladeshiOnly ? 'BD Only: ON' : 'BD Only: OFF'}</span>
           </button>
         </div>
 
@@ -1365,7 +1427,6 @@ Requirements:
               filteredCandidates.map((c) => {
                 const isSelected = selectedCandidate?.id === c.id;
                 const isAccepted = c.computedStatus === 'accepted';
-                const initials = getCandidateInitials(c.displayName);
 
                 return (
                   <div
@@ -1379,18 +1440,23 @@ Requirements:
                   >
                     {/* Row 1: Candidate Name & Original Filename + Top-Right Actions */}
                     <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <h3
-                          className={`text-xs font-bold truncate transition-colors ${
-                            isSelected ? 'text-white' : 'text-slate-200 hover:text-white'
-                          }`}
-                          title={c.displayName}
-                        >
-                          {c.displayName}
-                        </h3>
-                        <p className="text-[10px] text-slate-400 truncate mt-0.5" title={c.name}>
-                          {c.name}
-                        </p>
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div className="w-6 h-6 rounded-md bg-indigo-950/80 border border-indigo-700/60 text-indigo-300 font-bold text-[9.5px] flex items-center justify-center shrink-0 font-mono select-none">
+                          {getCandidateInitials(c.displayName)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <h3
+                            className={`text-xs font-bold truncate transition-colors ${
+                              isSelected ? 'text-white' : 'text-slate-200 hover:text-white'
+                            }`}
+                            title={c.displayName}
+                          >
+                            {c.displayName}
+                          </h3>
+                          <p className="text-[10px] text-slate-400 truncate" title={c.name}>
+                            {c.name}
+                          </p>
+                        </div>
                       </div>
 
                       <div className="shrink-0 flex items-center gap-1.5 self-start">
@@ -1422,11 +1488,26 @@ Requirements:
                       </div>
                     </div>
 
-                    {/* Row 2: Metadata Badges (File Type, Experience, Skill Match Count) */}
+                    {/* Row 2: Metadata Badges (File Type, Location, Experience, Skill Match Count) */}
                     <div className="flex items-center gap-1.5 mt-1.5 flex-wrap text-[10px]">
                       <span className="text-[9px] uppercase font-bold px-1.5 py-0.2 rounded bg-slate-700/60 text-slate-300 font-mono">
                         {c.fileType}
                       </span>
+
+                      {/* Location badge */}
+                      {c.location?.displayLocation && (
+                        <span
+                          className={`text-[9px] font-semibold px-1.5 py-0.2 rounded font-mono border inline-flex items-center gap-1 ${
+                            c.location.isForeign
+                              ? 'bg-rose-950/80 text-rose-300 border-rose-800/50'
+                              : 'bg-slate-800/90 text-slate-300 border-slate-700/60'
+                          }`}
+                          title={`Detected Location: ${c.location.displayLocation}`}
+                        >
+                          <span>{c.location.isForeign ? '🌐' : '🇧🇩'}</span>
+                          <span className="truncate max-w-[100px]">{c.location.displayLocation}</span>
+                        </span>
+                      )}
 
                       {/* Experience badge - only show for medium or high confidence */}
                       {c.experience && c.experience.level !== 'Not Specified' && c.experience.confidence !== 'low' && (
@@ -1465,16 +1546,29 @@ Requirements:
                       </div>
                     )}
 
+                    {/* Missing Must-Have Warning Badge */}
+                    {c.hasMissingMustHave && !c.hasDisqualifier && (
+                      <div className="mt-2 text-[10px] text-amber-300 font-medium bg-amber-950/60 border border-amber-700/50 px-2 py-1 rounded-lg flex items-center gap-1.5 shadow-xs">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span className="truncate">Missing Must-Have: {c.missingMustHaves.map((m) => m.keyword).join(', ')}</span>
+                      </div>
+                    )}
+
                     {/* Row 3: Matched Skill Tags (Single Row) */}
                     {c.foundKeywords.length > 0 && (
                       <div className="flex items-center gap-1 mt-2 overflow-hidden flex-nowrap">
                         {c.foundKeywords.slice(0, 3).map((k, idx) => (
                           <span
                             key={idx}
-                            className="text-[9.5px] bg-slate-900/90 text-slate-300 px-2 py-0.5 rounded-md border border-slate-700/70 font-medium truncate shrink-0 max-w-[85px]"
-                            title={k.keyword}
+                            className={`text-[9.5px] px-2 py-0.5 rounded-md border font-medium truncate shrink-0 max-w-[95px] flex items-center gap-1 ${
+                              k.mustHave
+                                ? 'bg-amber-950/50 text-amber-200 border-amber-600/50'
+                                : 'bg-slate-900/90 text-slate-300 border-slate-700/70'
+                            }`}
+                            title={`${k.keyword}${k.mustHave ? ' (Must-Have Met)' : ''}`}
                           >
-                            {k.keyword}
+                            {k.mustHave && <span className="text-amber-400">⭐</span>}
+                            <span>{k.keyword}</span>
                           </span>
                         ))}
                         {c.foundKeywords.length > 3 && (
@@ -1777,83 +1871,117 @@ Requirements:
               </div>
 
               {/* Direct Candidate Contact & Outreach Card */}
-              {(selectedCandidate.contact?.primaryEmail || selectedCandidate.contact?.primaryPhone) && (
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2.5">
-                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-indigo-400" />
-                    Candidate Outreach
-                  </h4>
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2.5">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-indigo-400" />
+                  Candidate Outreach & Location
+                </h4>
 
-                  {/* Email row */}
-                  {selectedCandidate.contact.primaryEmail && (
-                    <div className="flex items-center justify-between gap-2 p-2 bg-slate-900 rounded-lg border border-slate-800">
+                {/* Location / Country row */}
+                <div className="flex items-center justify-between gap-2 p-2 bg-slate-900 rounded-lg border border-slate-800">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <MapPin className={`w-3.5 h-3.5 shrink-0 ${selectedCandidate.location?.isForeign ? 'text-rose-400' : 'text-indigo-400'}`} />
+                    <div className="min-w-0">
+                      <div className="text-[9px] text-slate-500 font-semibold uppercase flex items-center gap-1">
+                        <span>Location / Country</span>
+                        {selectedCandidate.location?.isBangladesh && (
+                          <span className="text-[9px] bg-emerald-950/80 text-emerald-300 border border-emerald-800/40 px-1 rounded font-bold">
+                            🇧🇩 BD Verified
+                          </span>
+                        )}
+                        {selectedCandidate.location?.isForeign && (
+                          <span className="text-[9px] bg-rose-950/80 text-rose-300 border border-rose-800/40 px-1 rounded font-bold">
+                            🌐 Foreign Location
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs font-semibold text-slate-200 truncate block">
+                        {selectedCandidate.location?.displayLocation || (selectedCandidate.location?.country ? selectedCandidate.location.country : 'Not Specified')}
+                      </span>
+                    </div>
+                  </div>
+                  {selectedCandidate.location?.displayLocation && (
+                    <button
+                      onClick={() => copyToClipboard(selectedCandidate.location.displayLocation, 'Location')}
+                      className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                      title="Copy Location"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Email row */}
+                {selectedCandidate.contact?.primaryEmail && (
+                  <div className="flex items-center justify-between gap-2 p-2 bg-slate-900 rounded-lg border border-slate-800">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Mail className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-[9px] text-slate-500 font-semibold uppercase">Email</div>
+                        <a
+                          href={`mailto:${selectedCandidate.contact.primaryEmail}`}
+                          className="text-xs font-semibold text-slate-200 hover:text-indigo-300 transition-colors truncate block"
+                          title="Click to compose email"
+                        >
+                          {selectedCandidate.contact.primaryEmail}
+                        </a>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => copyToClipboard(selectedCandidate.contact.primaryEmail, 'Email')}
+                      className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                      title="Copy Email Address"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Bangladeshi / Intl Phone row */}
+                {selectedCandidate.contact?.primaryPhone && (
+                  <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800">
+                    <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
-                        <Mail className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                        <Phone className={`w-3.5 h-3.5 shrink-0 ${selectedCandidate.contact.primaryPhone.isBangladeshi ? 'text-emerald-400' : 'text-amber-400'}`} />
                         <div className="min-w-0">
-                          <div className="text-[9px] text-slate-500 font-semibold uppercase">Email</div>
-                          <a
-                            href={`mailto:${selectedCandidate.contact.primaryEmail}`}
-                            className="text-xs font-semibold text-slate-200 hover:text-indigo-300 transition-colors truncate block"
-                            title="Click to compose email"
-                          >
-                            {selectedCandidate.contact.primaryEmail}
-                          </a>
+                          <div className="text-[9px] text-slate-500 font-semibold uppercase flex items-center gap-1">
+                            <span>Phone</span>
+                            {selectedCandidate.contact.primaryPhone.operator && (
+                              <span className={`text-[9px] px-1 rounded font-normal ${
+                                selectedCandidate.contact.primaryPhone.isBangladeshi ? 'bg-slate-800 text-slate-400' : 'bg-rose-950 text-rose-300'
+                              }`}>
+                                {selectedCandidate.contact.primaryPhone.operator}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-xs font-semibold text-slate-200 block font-mono whitespace-nowrap">
+                            {selectedCandidate.contact.primaryPhone.display}
+                          </span>
                         </div>
                       </div>
                       <button
-                        onClick={() => copyToClipboard(selectedCandidate.contact.primaryEmail, 'Email')}
+                        onClick={() => copyToClipboard(selectedCandidate.contact.primaryPhone.raw, 'Phone Number')}
                         className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
-                        title="Copy Email Address"
+                        title="Copy Phone Number"
                       >
                         <Copy className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                  )}
 
-                  {/* Bangladeshi / Intl Phone row */}
-                  {selectedCandidate.contact.primaryPhone && (
-                    <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                          <div className="min-w-0">
-                            <div className="text-[9px] text-slate-500 font-semibold uppercase flex items-center gap-1">
-                              <span>Phone</span>
-                              {selectedCandidate.contact.primaryPhone.operator && (
-                                <span className="text-[9px] bg-slate-800 text-slate-400 px-1 rounded font-normal">
-                                  {selectedCandidate.contact.primaryPhone.operator}
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-xs font-semibold text-slate-200 block font-mono whitespace-nowrap">
-                              {selectedCandidate.contact.primaryPhone.display}
-                            </span>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => copyToClipboard(selectedCandidate.contact.primaryPhone.raw, 'Phone Number')}
-                          className="p-1.5 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
-                          title="Copy Phone Number"
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-
-                      {/* WhatsApp Button on Next Line */}
-                      <a
-                        href={selectedCandidate.contact.primaryPhone.whatsappUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full mt-2 py-1.5 px-3 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 hover:text-white rounded-lg border border-emerald-800/60 transition-all text-xs flex items-center justify-center gap-1.5 font-semibold shadow-xs"
-                        title="Open WhatsApp Chat"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Open WhatsApp Chat</span>
-                      </a>
-                    </div>
-                  )}
-                </div>
-              )}
+                    {/* WhatsApp Button on Next Line */}
+                    <a
+                      href={selectedCandidate.contact.primaryPhone.whatsappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full mt-2 py-1.5 px-3 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 hover:text-white rounded-lg border border-emerald-800/60 transition-all text-xs flex items-center justify-center gap-1.5 font-semibold shadow-xs"
+                      title="Open WhatsApp Chat"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Open WhatsApp Chat</span>
+                    </a>
+                  </div>
+                )}
+              </div>
 
               {/* Experience & Seniority Breakdown Card */}
               {selectedCandidate.experience && selectedCandidate.experience.level !== 'Not Specified' && selectedCandidate.experience.confidence !== 'low' && (
@@ -1896,6 +2024,21 @@ Requirements:
                 </div>
               )}
 
+              {/* Missing Must-Have Alert */}
+              {selectedCandidate.hasMissingMustHave && (
+                <div className="bg-amber-950/80 border border-amber-700/80 p-3 rounded-xl text-xs text-amber-200 space-y-1 shadow-sm">
+                  <div className="font-bold flex items-center gap-1.5 text-amber-300">
+                    <AlertCircle className="w-4 h-4 text-amber-400" />
+                    Missing Must-Have Criteria ({selectedCandidate.missingMustHaves.length})
+                  </div>
+                  <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                    Missing required must-have skill(s):{' '}
+                    <strong>{selectedCandidate.missingMustHaves.map((m) => m.keyword).join(', ')}</strong>.
+                    Candidate cannot be shortlisted automatically.
+                  </p>
+                </div>
+              )}
+
               {/* Matched Skills Table */}
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -1921,7 +2064,7 @@ Requirements:
                       <thead className="bg-slate-950 text-slate-400 font-semibold border-b border-slate-800">
                         <tr>
                           <th className="p-2">Skill</th>
-                          <th className="p-2">Category</th>
+                          <th className="p-2">Type</th>
                           <th className="p-2 text-center">Hits</th>
                           <th className="p-2 text-right">Points</th>
                         </tr>
@@ -1929,9 +2072,17 @@ Requirements:
                       <tbody className="divide-y divide-slate-800/60 bg-slate-900/60">
                         {selectedCandidate.foundKeywords.map((k, i) => (
                           <tr key={i}>
-                            <td className="p-2 font-bold text-slate-200">{k.keyword}</td>
+                            <td className="p-2 font-bold text-slate-200 flex items-center gap-1.5">
+                              {k.mustHave && (
+                                <span className="text-amber-400" title="Must-Have Skill Met">⭐</span>
+                              )}
+                              <span>{k.keyword}</span>
+                            </td>
                             <td className="p-2 text-[10px] text-slate-400">
-                              {CATEGORY_LABELS[k.category] || k.category}
+                              <span className="block">{CATEGORY_LABELS[k.category] || k.category}</span>
+                              {k.mustHave && (
+                                <span className="text-[9px] text-amber-400 font-bold">Must-Have</span>
+                              )}
                             </td>
                             <td className="p-2 text-center font-mono font-bold text-slate-300">
                               {k.matches}×
@@ -1956,10 +2107,15 @@ Requirements:
                   <div className="flex flex-wrap gap-1">
                     {selectedCandidate.missingSkills.map((k) => (
                       <span
-                        key={k.id}
-                        className="text-[10px] bg-rose-950/40 text-rose-400 border border-rose-900/40 px-2 py-0.5 rounded-md font-medium"
+                        key={k.id || k.keyword}
+                        className={`text-[10px] px-2 py-0.5 rounded-md font-medium border flex items-center gap-1 ${
+                          k.mustHave
+                            ? 'bg-rose-950/80 text-rose-300 border-rose-700 shadow-xs font-bold'
+                            : 'bg-rose-950/40 text-rose-400 border-rose-900/40'
+                        }`}
                       >
-                        ✕ {k.keyword}
+                        {k.mustHave ? '⭐ Missing Must-Have: ' : '✕ '}
+                        {k.keyword}
                       </span>
                     ))}
                   </div>
@@ -2201,7 +2357,7 @@ Requirements:
                       {/* Skills interactive chips grid */}
                       <div className="space-y-2">
                         <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                          Review Extracted Skills (Toggle on/off or adjust weights):
+                          Review Extracted Skills (Toggle on/off, adjust weights, or mark Must-Have):
                         </span>
                         <div className="flex flex-wrap gap-2.5 p-1 pb-3">
                           {extractedJdResult.skills.map((skill, idx) => (
@@ -2210,7 +2366,9 @@ Requirements:
                               onClick={() => toggleJdSkillSelection(idx)}
                               className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-all flex items-center gap-2 cursor-pointer select-none ${
                                 skill.selected
-                                  ? skill.importance === 'required'
+                                  ? skill.mustHave
+                                    ? 'bg-amber-950/80 text-amber-200 border-amber-500/80 shadow-xs ring-1 ring-amber-500/40'
+                                    : skill.importance === 'required'
                                     ? 'bg-indigo-950/90 text-indigo-200 border-indigo-500/80 shadow-xs ring-1 ring-indigo-500/40'
                                     : 'bg-slate-800 text-slate-200 border-slate-600 shadow-xs'
                                   : 'bg-slate-900/60 text-slate-500 border-slate-800 opacity-60'
@@ -2227,6 +2385,23 @@ Requirements:
                               <span className="text-[10px] text-slate-400 uppercase font-mono">
                                 {CATEGORY_LABELS[skill.category] || skill.category}
                               </span>
+
+                              {/* Must Have Toggle */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleJdSkillMustHave(idx);
+                                }}
+                                className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold transition-all cursor-pointer ${
+                                  skill.mustHave
+                                    ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
+                                    : 'bg-slate-800 text-slate-400 hover:text-amber-300 hover:bg-slate-700'
+                                }`}
+                                title="Toggle Must-Have requirement for this skill"
+                              >
+                                {skill.mustHave ? '⭐ Must-Have' : '+ Must-Have'}
+                              </button>
 
                               {/* Weight controls */}
                               <div
@@ -2345,10 +2520,10 @@ Requirements:
                   {/* Add Custom Skill Form */}
                   <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
                     <span className="text-xs font-bold text-slate-300">Add Custom Skill</span>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <input
                         type="text"
-                        placeholder="Skill keyword (e.g. C++, GraphQL, AWS)"
+                        placeholder="Skill keyword (e.g. Flutter, C++, GraphQL, AWS)"
                         value={newPosKeyword}
                         onChange={(e) => setNewPosKeyword(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && addPositiveKeyword()}
@@ -2374,9 +2549,26 @@ Requirements:
                           className="w-8 text-xs bg-transparent text-center font-bold text-white focus:outline-none"
                         />
                       </div>
+
+                      {/* Must-Have Toggle Checkbox */}
+                      <label className={`flex items-center gap-1.5 px-2.5 py-1.5 border rounded-lg text-xs cursor-pointer select-none transition-all ${
+                        newPosMustHave
+                          ? 'bg-amber-950/80 text-amber-200 border-amber-600/70 shadow-xs'
+                          : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-600'
+                      }`}>
+                        <input
+                          type="checkbox"
+                          checked={newPosMustHave}
+                          onChange={(e) => setNewPosMustHave(e.target.checked)}
+                          className="sr-only"
+                        />
+                        <span className="text-amber-400 font-bold">⭐</span>
+                        <span className="font-semibold">{newPosMustHave ? 'Must-Have: Yes' : 'Must-Have: No'}</span>
+                      </label>
+
                       <button
                         onClick={addPositiveKeyword}
-                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-colors"
+                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
                       >
                         Add Skill
                       </button>
@@ -2386,13 +2578,20 @@ Requirements:
                   {/* Active Skills List */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                        Active Required Skills ({positiveKeywords.length}):
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                          Active Required Skills ({positiveKeywords.length}):
+                        </span>
+                        {positiveKeywords.filter((k) => k.mustHave).length > 0 && (
+                          <span className="text-[10px] bg-amber-950 text-amber-300 border border-amber-700/60 px-2 py-0.2 rounded-full font-bold font-mono">
+                            ⭐ {positiveKeywords.filter((k) => k.mustHave).length} Must-Have
+                          </span>
+                        )}
+                      </div>
                       {positiveKeywords.length > 0 && (
                         <button
                           onClick={() => setPositiveKeywords([])}
-                          className="text-[11px] text-rose-400 hover:underline font-medium"
+                          className="text-[11px] text-rose-400 hover:underline font-medium cursor-pointer"
                         >
                           Clear All
                         </button>
@@ -2408,13 +2607,30 @@ Requirements:
                         {positiveKeywords.map((item) => (
                           <span
                             key={item.id}
-                            className="inline-flex items-center gap-1.5 text-xs bg-slate-800 text-slate-200 px-2.5 py-1 rounded-lg border border-slate-700 font-medium"
+                            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border font-medium transition-all ${
+                              item.mustHave
+                                ? 'bg-amber-950/50 text-amber-200 border-amber-600/70 shadow-xs ring-1 ring-amber-600/30'
+                                : 'bg-slate-800 text-slate-200 border-slate-700'
+                            }`}
                           >
                             <span className="font-bold">{item.keyword}</span>
                             <span className="text-[10px] text-indigo-400 font-mono">W:{item.weight}</span>
                             <button
+                              type="button"
+                              onClick={() => toggleSkillMustHave(item.id)}
+                              className={`px-1.5 py-0.2 rounded text-[9.5px] font-bold transition-colors cursor-pointer ${
+                                item.mustHave
+                                  ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
+                                  : 'bg-slate-700/80 text-slate-400 hover:text-amber-300 hover:bg-slate-700'
+                              }`}
+                              title="Click to toggle Must-Have requirement (candidate must match this to be shortlisted)"
+                            >
+                              {item.mustHave ? '⭐ Must-Have' : '+ Must-Have'}
+                            </button>
+                            <button
                               onClick={() => removePositiveKeyword(item.id)}
-                              className="text-slate-500 hover:text-rose-400 ml-1"
+                              className="text-slate-500 hover:text-rose-400 ml-0.5 cursor-pointer"
+                              title="Remove skill"
                             >
                               <X className="w-3 h-3" />
                             </button>
@@ -2429,6 +2645,50 @@ Requirements:
               {/* TAB 2: DEALBREAKERS */}
               {setupTab === 'disqualifiers' && (
                 <div className="space-y-4">
+                  {/* Bangladeshi Candidates Only Toggle Card */}
+                  <div className={`p-4 rounded-xl border transition-all ${
+                    bangladeshiOnly
+                      ? 'bg-emerald-950/40 border-emerald-600/70 shadow-sm'
+                      : 'bg-slate-950 border-slate-800'
+                  }`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">🇧🇩</span>
+                          <span className="text-xs font-bold text-white uppercase tracking-wider">
+                            Bangladeshi Candidates Only
+                          </span>
+                          <span className={`text-[10px] font-bold px-2 py-0.2 rounded-full border ${
+                            bangladeshiOnly
+                              ? 'bg-emerald-900/90 text-emerald-300 border-emerald-600/60'
+                              : 'bg-slate-800 text-slate-400 border-slate-700'
+                          }`}>
+                            {bangladeshiOnly ? 'ON (Default)' : 'OFF'}
+                          </span>
+                        </div>
+                        <p className="text-[11.5px] text-slate-300 leading-relaxed">
+                          Filters candidates based on <strong>Bangladeshi Phone Number</strong> (013–019, +880) and <strong>Country</strong>.
+                        </p>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          • Rejects candidates whose resume mentions a <strong>foreign country</strong> (e.g. India, USA, Pakistan, Nigeria).
+                          <br />
+                          • Rejects candidates with <strong>foreign phone numbers</strong> (+91, +1, +44, etc.) if no BD phone is found.
+                          <br />
+                          • Resumes with <strong>empty/unspecified country</strong> or <strong>no phone number</strong> are <em>accepted</em> (empty is ok).
+                        </p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+                        <input
+                          type="checkbox"
+                          checked={bangladeshiOnly}
+                          onChange={(e) => setBangladeshiOnly(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                      </label>
+                    </div>
+                  </div>
+
                   {/* Common Dealbreaker Presets */}
                   <div>
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-2">
@@ -2495,7 +2755,7 @@ Requirements:
                       )}
                       <button
                         onClick={addNegativeKeyword}
-                        className="px-4 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition-colors"
+                        className="px-4 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
                       >
                         Add
                       </button>
@@ -2506,47 +2766,62 @@ Requirements:
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                        Active Dealbreakers & Penalties ({negativeKeywords.length}):
+                        Active Dealbreakers & Penalties ({negativeKeywords.length + (bangladeshiOnly ? 1 : 0)}):
                       </span>
                       {negativeKeywords.length > 0 && (
                         <button
                           onClick={() => setNegativeKeywords([])}
-                          className="text-[11px] text-rose-400 hover:underline font-medium"
+                          className="text-[11px] text-rose-400 hover:underline font-medium cursor-pointer"
                         >
-                          Clear All
+                          Clear Custom
                         </button>
                       )}
                     </div>
 
-                    {negativeKeywords.length === 0 ? (
-                      <div className="p-3 bg-slate-950/60 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500">
-                        No dealbreakers configured. Candidates will be judged solely on positive match score.
-                      </div>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {negativeKeywords.map((neg) => (
-                          <span
-                            key={neg.id}
-                            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border font-medium ${
-                              neg.type === 'disqualifier'
-                                ? 'bg-rose-950/60 text-rose-300 border-rose-800/60'
-                                : 'bg-amber-950/60 text-amber-300 border-amber-800/60'
-                            }`}
+                    <div className="flex flex-wrap gap-2">
+                      {bangladeshiOnly && (
+                        <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border bg-emerald-950/60 text-emerald-300 border-emerald-800/60 font-medium">
+                          <span>🇧🇩</span>
+                          <span className="font-bold">Bangladeshi Only</span>
+                          <span className="text-[10px] opacity-75">Dealbreaker</span>
+                          <button
+                            onClick={() => setBangladeshiOnly(false)}
+                            className="text-slate-400 hover:text-white ml-1 cursor-pointer"
+                            title="Disable Bangladeshi Only requirement"
                           >
-                            <span className="font-bold">{neg.keyword}</span>
-                            <span className="text-[10px] opacity-75">
-                              {neg.type === 'disqualifier' ? 'Dealbreaker' : `-${neg.penalty}pts`}
-                            </span>
-                            <button
-                              onClick={() => removeNegativeKeyword(neg.id)}
-                              className="text-slate-400 hover:text-white ml-1"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      )}
+
+                      {negativeKeywords.map((neg) => (
+                        <span
+                          key={neg.id}
+                          className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border font-medium ${
+                            neg.type === 'disqualifier'
+                              ? 'bg-rose-950/60 text-rose-300 border-rose-800/60'
+                              : 'bg-amber-950/60 text-amber-300 border-amber-800/60'
+                          }`}
+                        >
+                          <span className="font-bold">{neg.keyword}</span>
+                          <span className="text-[10px] opacity-75">
+                            {neg.type === 'disqualifier' ? 'Dealbreaker' : `-${neg.penalty}pts`}
                           </span>
-                        ))}
-                      </div>
-                    )}
+                          <button
+                            onClick={() => removeNegativeKeyword(neg.id)}
+                            className="text-slate-400 hover:text-white ml-1 cursor-pointer"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+
+                      {!bangladeshiOnly && negativeKeywords.length === 0 && (
+                        <div className="p-3 bg-slate-950/60 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500 w-full">
+                          No dealbreakers configured. Candidates will be judged solely on positive match score.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
