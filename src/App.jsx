@@ -251,14 +251,8 @@ const CVParserApp = () => {
   // Inspector panel toggle
   const [showInspector, setShowInspector] = useState(true);
 
-  // Keywords configuration - starter skills so skill checking works immediately
-  const [positiveKeywords, setPositiveKeywords] = useState([
-    { id: 'def-1', keyword: 'React', weight: 8, category: 'technical', mustHave: false },
-    { id: 'def-2', keyword: 'JavaScript', weight: 7, category: 'technical', mustHave: false },
-    { id: 'def-3', keyword: 'Node.js', weight: 8, category: 'technical', mustHave: false },
-    { id: 'def-4', keyword: 'Python', weight: 8, category: 'technical', mustHave: false },
-    { id: 'def-5', keyword: 'Communication', weight: 5, category: 'soft', mustHave: false },
-  ]);
+  // Keywords configuration - completely fresh by default
+  const [positiveKeywords, setPositiveKeywords] = useState([]);
   const [negativeKeywords, setNegativeKeywords] = useState([]);
   const [bangladeshiOnly, setBangladeshiOnly] = useState(true); // Bangladeshi Only dealbreaker: ON by default
 
